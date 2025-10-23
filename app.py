@@ -17,6 +17,12 @@ from typing import Tuple, Optional
 import pandas as pd
 import streamlit as st
 
+# opzionale per scansione QR via fotocamera
+try:
+    import cv2  # pip install opencv-python
+except Exception:
+    cv2 = None
+
 DB_PATH = os.environ.get("APP_DB_PATH", "store.db")
 
 # ---------------- DB -----------------
@@ -99,6 +105,26 @@ def init_db():
 
 
 # --------------- UTILS ----------------
+
+def decode_qr_from_bytes(img_bytes: bytes) -> Optional[str]:
+    """Decodifica un QR code da bytes immagine usando OpenCV.
+    Restituisce il testo (SKU) oppure None se non trovato.
+    """
+    if cv2 is None or not img_bytes:
+        return None
+    import numpy as np
+    arr = np.frombuffer(img_bytes, dtype=np.uint8)
+    img = cv2.imdecode(arr, cv2.IMREAD_COLOR)
+    if img is None:
+        return None
+    detector = cv2.QRCodeDetector()
+    try:
+        data, _, _ = detector.detectAndDecode(img)
+    except Exception:
+        data = ""
+    return data.strip() or None
+
+
 
 def fmt_thousands(n: int) -> str:
     try:
@@ -349,22 +375,46 @@ def page_movements():
             else:
                 st.success(f"Trovato {scanned} — Giacenza attuale: {int(exists.iloc[0]['qty'])}")
                 sc1, sc2 = st.columns([1,1])
-                mtype_s = sc1.selectbox("Tipo movimento", ['CARICO','SCARICO','RETTIFICA +','RETTIFICA -'], key="scan_mtype")
-                qty_s = int(sc2.number_input("Quantità", value=1, min_value=1, step=1, key="scan_qty"))
-                note_s = st.text_input("Nota", key="scan_note")
-                if st.button("Registra (da scanner)"):
-                    signed = (
-                        qty_s if mtype_s=='CARICO' else
-                        -qty_s if mtype_s=='SCARICO' else
-                        qty_s if mtype_s=='RETTIFICA +' else
-                        -qty_s
-                    )
+                mtype_s = sc1.selectbox("Tipo movimento", ['CARICO','SCARICO','RETTIFICA +','RETTIFICA -'], key="scan_mtype_usb")
+                qty_s = int(sc2.number_input("Quantità", value=1, min_value=1, step=1, key="scan_qty_usb"))
+                note_s = st.text_input("Nota", key="scan_note_usb")
+                if st.button("Registra (da scanner USB)"):
+                    signed = (qty_s if mtype_s=='CARICO' else -qty_s if mtype_s=='SCARICO' else qty_s if mtype_s=='RETTIFICA +' else -qty_s)
                     execute(
                         "INSERT INTO movements(sku, mtype, causale, qty, note, created_at) VALUES (?,?,?,?,?,?)",
                         (scanned, 'RETTIFICA' if mtype_s.startswith('RETTIFICA') else mtype_s, 1 if mtype_s=='CARICO' else 2 if mtype_s=='SCARICO' else 3 if mtype_s=='RETTIFICA +' else 4, signed, note_s or None, datetime.now().isoformat(timespec='seconds')),
                     )
-                    # aggiorna giacenza cumulata con il delta firmato
                     execute("UPDATE items SET qty = qty + ? WHERE sku = ?", (signed, scanned))
+                    st.success("Registrato.")
+
+    with st.expander("📱 Scanner con fotocamera (QR)"):
+        st.caption("Usa la fotocamera del telefono per leggere un **QR code** con dentro lo SKU. (Serve OpenCV: `pip install opencv-python`)")
+        if cv2 is None:
+            st.warning("Modulo OpenCV non disponibile. Installa con: pip install opencv-python")
+        cam_img = st.camera_input("Inquadra il QR dell'articolo")
+        decoded_sku = None
+        if cam_img is not None:
+            decoded_sku = decode_qr_from_bytes(cam_img.getvalue())
+            if not decoded_sku:
+                st.error("Nessun QR riconosciuto. Assicurati che l'etichetta sia un QR e ben a fuoco.")
+        if decoded_sku:
+            st.success(f"QR letto: {decoded_sku}")
+            exists = query_df("SELECT sku, qty FROM items WHERE sku=?", (decoded_sku,))
+            if exists.empty:
+                st.error("SKU non trovato nel catalogo.")
+            else:
+                st.info(f"Giacenza attuale: {int(exists.iloc[0]['qty'])}")
+                qc1, qc2 = st.columns([1,1])
+                mtype_cam = qc1.selectbox("Tipo movimento", ['CARICO','SCARICO','RETTIFICA +','RETTIFICA -'], key="scan_mtype_cam")
+                qty_cam = int(qc2.number_input("Quantità", value=1, min_value=1, step=1, key="scan_qty_cam"))
+                note_cam = st.text_input("Nota", key="scan_note_cam")
+                if st.button("Registra (da fotocamera)"):
+                    signed = (qty_cam if mtype_cam=='CARICO' else -qty_cam if mtype_cam=='SCARICO' else qty_cam if mtype_cam=='RETTIFICA +' else -qty_cam)
+                    execute(
+                        "INSERT INTO movements(sku, mtype, causale, qty, note, created_at) VALUES (?,?,?,?,?,?)",
+                        (decoded_sku, 'RETTIFICA' if mtype_cam.startswith('RETTIFICA') else mtype_cam, 1 if mtype_cam=='CARICO' else 2 if mtype_cam=='SCARICO' else 3 if mtype_cam=='RETTIFICA +' else 4, signed, note_cam or None, datetime.now().isoformat(timespec='seconds')),
+                    )
+                    execute("UPDATE items SET qty = qty + ? WHERE sku = ?", (signed, decoded_sku))
                     st.success("Registrato.")
 
     with st.form("mov_form", clear_on_submit=True):
