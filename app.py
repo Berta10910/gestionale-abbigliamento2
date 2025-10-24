@@ -479,105 +479,162 @@ def page_movements():
 
 
 def page_analysis():
-    st.header("📊 Analisi Magazzino — Vista Pivot con Filtri Avanzati")
+    st.header("📊 Analisi Magazzino — Vista Pivot con Filtri e Giacenza a Data")
 
-    # Selezione filtri
-    col1, col2, col3 = st.columns(3)
-    d_from = col1.date_input("Dal", value=date.today().replace(day=1))
-    d_to = col2.date_input("Al", value=date.today())
-    price_max = col3.number_input("Prezzo massimo (€)", min_value=0.0, value=0.0, step=0.10)
-
-    col4, col5, col6 = st.columns(3)
-    min_stock = int(col4.number_input("Giacenza minima", min_value=0, value=0))
-    max_stock = int(col5.number_input("Giacenza massima (0 = nessun limite)", min_value=0, value=0))
-    order_opt = col6.selectbox(
-        "Ordina per",
-        ["Articolo", "Più movimentato", "Più venduto", "Valore magazzino", "Costo medio"],
-        index=0,
+    # --- Scelta modalità ---
+    mode = st.radio(
+        "Modalità di analisi",
+        ["Periodo (movimenti e pivot)", "Storica al… (giacenza e valore a una data)"] ,
+        horizontal=True,
     )
 
-    # Carica dati articoli e movimenti
+    # --- Filtri comuni ---
+    col1, col2, col3 = st.columns(3)
+    price_max = col1.number_input("Prezzo/Costo massimo (€)", min_value=0.0, value=0.0, step=0.10)
+    min_stock = int(col2.number_input("Giacenza minima", min_value=0, value=0))
+    max_stock = int(col3.number_input("Giacenza massima (0 = nessun limite)", min_value=0, value=0))
+
+    # --- Dati base articoli ---
     df_items = query_df(
         "SELECT i.sku AS articolo, i.type AS tipo, i.season AS stagione, i.size AS taglia, "
         "i.cost AS costo, i.price AS prezzo, i.qty AS giacenza, s.name AS fornitore "
         "FROM items i LEFT JOIN suppliers s ON s.id=i.supplier_id"
     )
-
-    mov = query_df(
-        "SELECT sku AS articolo, mtype AS tipo_movimento, qty AS quantita, "
-        "date(created_at) AS data "
-        "FROM movements WHERE date(created_at) BETWEEN ? AND ?",
-        (d_from.isoformat(), d_to.isoformat()),
-    )
-
-    if mov.empty and df_items.empty:
-        st.warning("Nessun dato disponibile nel periodo selezionato.")
+    if df_items.empty:
+        st.warning("Nessun articolo presente nel database.")
         return
 
-    # Calcola valore di magazzino e vendite (ogni SCARICO = vendita)
-    df_items["Valore Magazzino (€)"] = (df_items["giacenza"] * df_items["costo"]).round(2)
-    vendite = (
-        mov[mov["tipo_movimento"].str.upper() == "SCARICO"]
-        .groupby("articolo")["quantita"].sum().abs()
-        .reset_index()
-        .rename(columns={"quantita": "Vendite"})
-        if not mov.empty
-        else pd.DataFrame(columns=["articolo", "Vendite"])
-    )
+    # ------------------------------------------------------------
+    # MODALITÀ 1: Pivot di periodo (come prima, con movimenti)
+    # ------------------------------------------------------------
+    if mode == "Periodo (movimenti e pivot)":
+        c1, c2, c3 = st.columns(3)
+        d_from = c1.date_input("Dal", value=date.today().replace(day=1))
+        d_to = c2.date_input("Al", value=date.today())
+        order_opt = c3.selectbox(
+            "Ordina per",
+            ["Articolo", "Più movimentato", "Più venduto", "Valore magazzino", "Costo medio"],
+            index=0,
+        )
 
-    # Aggrega per articolo (pivot)
-    pivot_df = (
-        df_items.groupby(["articolo", "tipo", "stagione", "taglia", "fornitore"], as_index=False)
-        .agg({"giacenza": "sum", "costo": "mean", "Valore Magazzino (€)": "sum"})
-        .rename(columns={"giacenza": "Giacenza", "costo": "Costo Medio"})
-    )
+        mov = query_df(
+            "SELECT sku AS articolo, mtype AS tipo_movimento, qty AS quantita, date(created_at) AS data "
+            "FROM movements WHERE date(created_at) BETWEEN ? AND ?",
+            (d_from.isoformat(), d_to.isoformat()),
+        )
 
-    pivot_df = pivot_df.merge(vendite, on="articolo", how="left").fillna({"Vendite": 0})
+        # Valore attuale a costo (per vista di periodo)
+        df_items["Valore Magazzino (€)"] = (df_items["giacenza"] * df_items["costo"]).round(2)
 
-    # Calcola numero movimenti per articolo (movimentazione)
-    mov_count = (
-        mov.groupby("articolo")["quantita"].count().reset_index().rename(columns={"quantita": "Movimentazioni"})
-        if not mov.empty
-        else pd.DataFrame(columns=["articolo", "Movimentazioni"])
-    )
-    pivot_df = pivot_df.merge(mov_count, on="articolo", how="left").fillna({"Movimentazioni": 0})
+        # Vendite = somma assoluta scarichi nel periodo
+        vendite = (
+            mov[mov["tipo_movimento"].str.upper() == "SCARICO"].groupby("articolo")["quantita"].sum().abs().reset_index().rename(columns={"quantita": "Vendite"})
+            if not mov.empty else pd.DataFrame(columns=["articolo", "Vendite"])
+        )
 
-    # Applica filtri numerici
-    if price_max > 0:
-        pivot_df = pivot_df[pivot_df["Costo Medio"] <= price_max]
-    if min_stock > 0:
-        pivot_df = pivot_df[pivot_df["Giacenza"] >= min_stock]
-    if max_stock > 0:
-        pivot_df = pivot_df[pivot_df["Giacenza"] <= max_stock]
+        # Movimentazioni = numero righe movimento nel periodo
+        mov_count = (
+            mov.groupby("articolo")["quantita"].count().reset_index().rename(columns={"quantita": "Movimentazioni"})
+            if not mov.empty else pd.DataFrame(columns=["articolo", "Movimentazioni"])
+        )
 
-    # Ordinamento dinamico
-    if order_opt == "Più venduto":
-        pivot_df = pivot_df.sort_values(by="Vendite", ascending=False)
-    elif order_opt == "Più movimentato":
-        pivot_df = pivot_df.sort_values(by="Movimentazioni", ascending=False)
-    elif order_opt == "Valore magazzino":
-        pivot_df = pivot_df.sort_values(by="Valore Magazzino (€)", ascending=False)
-    elif order_opt == "Costo medio":
-        pivot_df = pivot_df.sort_values(by="Costo Medio", ascending=False)
+        # Pivot per articolo
+        pivot_df = (
+            df_items.groupby(["articolo", "tipo", "stagione", "taglia", "fornitore"], as_index=False)
+            .agg({"giacenza": "sum", "costo": "mean", "Valore Magazzino (€)": "sum"})
+            .rename(columns={"giacenza": "Giacenza", "costo": "Costo Medio"})
+        )
+        pivot_df = pivot_df.merge(vendite, on="articolo", how="left").merge(mov_count, on="articolo", how="left")
+        pivot_df[["Vendite", "Movimentazioni"]] = pivot_df[["Vendite", "Movimentazioni"]].fillna(0)
+
+        # Filtri numerici
+        if price_max > 0:
+            pivot_df = pivot_df[pivot_df["Costo Medio"] <= price_max]
+        if min_stock > 0:
+            pivot_df = pivot_df[pivot_df["Giacenza"] >= min_stock]
+        if max_stock > 0:
+            pivot_df = pivot_df[pivot_df["Giacenza"] <= max_stock]
+
+        # Ordinamento
+        if order_opt == "Più venduto":
+            pivot_df = pivot_df.sort_values(by="Vendite", ascending=False)
+        elif order_opt == "Più movimentato":
+            pivot_df = pivot_df.sort_values(by="Movimentazioni", ascending=False)
+        elif order_opt == "Valore magazzino":
+            pivot_df = pivot_df.sort_values(by="Valore Magazzino (€)", ascending=False)
+        elif order_opt == "Costo medio":
+            pivot_df = pivot_df.sort_values(by="Costo Medio", ascending=False)
+        else:
+            pivot_df = pivot_df.sort_values(by="articolo")
+
+        totale_valore = pivot_df["Valore Magazzino (€)"].sum()
+
+        st.subheader("📊 Vista di periodo")
+        st.dataframe(
+            format_df_for_display(
+                pivot_df,
+                int_cols=["Giacenza", "Vendite", "Movimentazioni"],
+                money_cols=["Costo Medio", "Valore Magazzino (€)"]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.markdown("---")
+        st.metric("💰 Valore totale magazzino (articoli mostrati)", fmt_money(totale_valore))
+
+    # -----------------------------------------------------------------
+    # MODALITÀ 2: Giacenza e Valore a una certa data (AS-OF DATE)
+    # -----------------------------------------------------------------
     else:
-        pivot_df = pivot_df.sort_values(by="articolo")
+        c1, c2 = st.columns([1,2])
+        ref_date = c1.date_input("Data di riferimento (giacenza storica)", value=date.today())
+        st.caption("La giacenza viene calcolata come somma algebrica dei movimenti fino alle 23:59:59 della data selezionata. Il valore è stimato con il costo articolo corrente.")
 
-    # Totale valore magazzino (solo articoli mostrati)
-    totale_valore = pivot_df["Valore Magazzino (€)"].sum()
+        # Somma movimenti fino alla data (inclusa)
+        ref_dt_end = f"{ref_date.isoformat()} 23:59:59"
+        mov_to_ref = query_df(
+            "SELECT sku AS articolo, SUM(qty) AS giacenza_ref FROM movements WHERE datetime(created_at) <= ? GROUP BY sku",
+            (ref_dt_end,),
+        )
 
-    # Tabella pivot finale
-    st.dataframe(
-        format_df_for_display(
-            pivot_df,
-            int_cols=["Giacenza", "Vendite", "Movimentazioni"],
-            money_cols=["Costo Medio", "Valore Magazzino (€)"],
-        ),
-        use_container_width=True,
-        hide_index=True,
-    )
+        # Unione con anagrafica articoli
+        asof_df = df_items.merge(mov_to_ref, on="articolo", how="left")
+        asof_df["giacenza_ref"] = asof_df["giacenza_ref"].fillna(0).astype(int)
 
-    st.markdown("---")
-    st.metric("💰 Valore totale magazzino (solo articoli in giacenza)", fmt_money(totale_valore))
+        # Applica filtri sulla giacenza storica e costo
+        if price_max > 0:
+            asof_df = asof_df[asof_df["costo"] <= price_max]
+        if min_stock > 0:
+            asof_df = asof_df[asof_df["giacenza_ref"] >= min_stock]
+        if max_stock > 0:
+            asof_df = asof_df[asof_df["giacenza_ref"] <= max_stock]
+
+        # Valore magazzino alla data (usa costo attuale come proxy)
+        asof_df["Valore Magazzino alla data (€)"] = (asof_df["giacenza_ref"] * asof_df["costo"]).round(2)
+
+        # Vista pivot per articolo
+        asof_pivot = (
+            asof_df.groupby(["articolo", "tipo", "stagione", "taglia", "fornitore"], as_index=False)
+            .agg({"giacenza_ref": "sum", "costo": "mean", "Valore Magazzino alla data (€)": "sum"})
+            .rename(columns={"giacenza_ref": "Giacenza alla data", "costo": "Costo Medio"})
+            .sort_values(by="articolo")
+        )
+
+        # Totale valore alla data (solo articoli mostrati e con giacenza > 0)
+        totale_asof = asof_pivot.loc[asof_pivot["Giacenza alla data"] > 0, "Valore Magazzino alla data (€)"].sum()
+
+        st.subheader("📅 Vista storica al giorno selezionato")
+        st.dataframe(
+            format_df_for_display(
+                asof_pivot,
+                int_cols=["Giacenza alla data"],
+                money_cols=["Costo Medio", "Valore Magazzino alla data (€)"]
+            ),
+            use_container_width=True,
+            hide_index=True,
+        )
+        st.markdown("---")
+        st.metric("💰 Valore totale magazzino alla data (solo giacenze > 0)", fmt_money(totale_asof))
 
 
 if __name__ == '__main__':
