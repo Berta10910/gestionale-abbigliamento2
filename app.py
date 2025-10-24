@@ -479,7 +479,7 @@ def page_movements():
 
 
 def page_analysis():
-     st.header("📊 Analisi Magazzino — Vista Pivot con Filtri Avanzati")
+    st.header("📊 Analisi Magazzino — Vista Pivot con Filtri Avanzati")
 
     # Selezione filtri
     col1, col2, col3 = st.columns(3)
@@ -490,13 +490,23 @@ def page_analysis():
     col4, col5, col6 = st.columns(3)
     min_stock = int(col4.number_input("Giacenza minima", min_value=0, value=0))
     max_stock = int(col5.number_input("Giacenza massima (0 = nessun limite)", min_value=0, value=0))
-    order_opt = col6.selectbox("Ordina per", ["Articolo", "Più movimentato", "Più venduto", "Valore magazzino", "Costo medio"], index=0)
+    order_opt = col6.selectbox(
+        "Ordina per",
+        ["Articolo", "Più movimentato", "Più venduto", "Valore magazzino", "Costo medio"],
+        index=0,
+    )
 
     # Carica dati articoli e movimenti
-    df_items = query_df("SELECT i.sku AS articolo, i.type AS tipo, i.season AS stagione, i.size AS taglia, i.cost AS costo, i.price AS prezzo, i.qty AS giacenza, s.name AS fornitore FROM items i LEFT JOIN suppliers s ON s.id=i.supplier_id")
+    df_items = query_df(
+        "SELECT i.sku AS articolo, i.type AS tipo, i.season AS stagione, i.size AS taglia, "
+        "i.cost AS costo, i.price AS prezzo, i.qty AS giacenza, s.name AS fornitore "
+        "FROM items i LEFT JOIN suppliers s ON s.id=i.supplier_id"
+    )
 
     mov = query_df(
-        "SELECT sku AS articolo, mtype AS tipo_movimento, qty AS quantita, date(created_at) AS data FROM movements WHERE date(created_at) BETWEEN ? AND ?",
+        "SELECT sku AS articolo, mtype AS tipo_movimento, qty AS quantita, "
+        "date(created_at) AS data "
+        "FROM movements WHERE date(created_at) BETWEEN ? AND ?",
         (d_from.isoformat(), d_to.isoformat()),
     )
 
@@ -505,50 +515,69 @@ def page_analysis():
         return
 
     # Calcola valore di magazzino e vendite (ogni SCARICO = vendita)
-    df_items['Valore Magazzino (€)'] = (df_items['giacenza'] * df_items['costo']).round(2)
-    vendite = mov[mov['tipo_movimento'].str.upper() == 'SCARICO'].groupby('articolo')['quantita'].sum().abs().reset_index().rename(columns={'quantita': 'Vendite'}) if not mov.empty else pd.DataFrame(columns=['articolo','Vendite'])
+    df_items["Valore Magazzino (€)"] = (df_items["giacenza"] * df_items["costo"]).round(2)
+    vendite = (
+        mov[mov["tipo_movimento"].str.upper() == "SCARICO"]
+        .groupby("articolo")["quantita"].sum().abs()
+        .reset_index()
+        .rename(columns={"quantita": "Vendite"})
+        if not mov.empty
+        else pd.DataFrame(columns=["articolo", "Vendite"])
+    )
 
     # Aggrega per articolo (pivot)
-    pivot_df = df_items.groupby(['articolo', 'tipo', 'stagione', 'taglia', 'fornitore'], as_index=False).agg({
-        'giacenza': 'sum',
-        'costo': 'mean',
-        'Valore Magazzino (€)': 'sum'
-    }).rename(columns={'giacenza': 'Giacenza', 'costo': 'Costo Medio'})
+    pivot_df = (
+        df_items.groupby(["articolo", "tipo", "stagione", "taglia", "fornitore"], as_index=False)
+        .agg({"giacenza": "sum", "costo": "mean", "Valore Magazzino (€)": "sum"})
+        .rename(columns={"giacenza": "Giacenza", "costo": "Costo Medio"})
+    )
 
-    pivot_df = pivot_df.merge(vendite, on='articolo', how='left').fillna({'Vendite': 0})
+    pivot_df = pivot_df.merge(vendite, on="articolo", how="left").fillna({"Vendite": 0})
 
-    # Calcola totale movimenti per movimentazione
-    mov_count = mov.groupby('articolo')['quantita'].count().reset_index().rename(columns={'quantita': 'Movimentazioni'}) if not mov.empty else pd.DataFrame(columns=['articolo','Movimentazioni'])
-    pivot_df = pivot_df.merge(mov_count, on='articolo', how='left').fillna({'Movimentazioni': 0})
+    # Calcola numero movimenti per articolo (movimentazione)
+    mov_count = (
+        mov.groupby("articolo")["quantita"].count().reset_index().rename(columns={"quantita": "Movimentazioni"})
+        if not mov.empty
+        else pd.DataFrame(columns=["articolo", "Movimentazioni"])
+    )
+    pivot_df = pivot_df.merge(mov_count, on="articolo", how="left").fillna({"Movimentazioni": 0})
 
     # Applica filtri numerici
     if price_max > 0:
-        pivot_df = pivot_df[pivot_df['Costo Medio'] <= price_max]
+        pivot_df = pivot_df[pivot_df["Costo Medio"] <= price_max]
     if min_stock > 0:
-        pivot_df = pivot_df[pivot_df['Giacenza'] >= min_stock]
+        pivot_df = pivot_df[pivot_df["Giacenza"] >= min_stock]
     if max_stock > 0:
-        pivot_df = pivot_df[pivot_df['Giacenza'] <= max_stock]
+        pivot_df = pivot_df[pivot_df["Giacenza"] <= max_stock]
 
     # Ordinamento dinamico
     if order_opt == "Più venduto":
-        pivot_df = pivot_df.sort_values(by='Vendite', ascending=False)
+        pivot_df = pivot_df.sort_values(by="Vendite", ascending=False)
     elif order_opt == "Più movimentato":
-        pivot_df = pivot_df.sort_values(by='Movimentazioni', ascending=False)
+        pivot_df = pivot_df.sort_values(by="Movimentazioni", ascending=False)
     elif order_opt == "Valore magazzino":
-        pivot_df = pivot_df.sort_values(by='Valore Magazzino (€)', ascending=False)
+        pivot_df = pivot_df.sort_values(by="Valore Magazzino (€)", ascending=False)
     elif order_opt == "Costo medio":
-        pivot_df = pivot_df.sort_values(by='Costo Medio', ascending=False)
+        pivot_df = pivot_df.sort_values(by="Costo Medio", ascending=False)
     else:
-        pivot_df = pivot_df.sort_values(by='articolo')
+        pivot_df = pivot_df.sort_values(by="articolo")
 
-    # Calcola totale valore magazzino
-    totale_valore = pivot_df['Valore Magazzino (€)'].sum()
+    # Totale valore magazzino (solo articoli mostrati)
+    totale_valore = pivot_df["Valore Magazzino (€)"].sum()
 
-    # Mostra pivot finale
-    st.dataframe(format_df_for_display(pivot_df, int_cols=['Giacenza', 'Vendite', 'Movimentazioni'], money_cols=['Costo Medio','Valore Magazzino (€)']), use_container_width=True, hide_index=True)
+    # Tabella pivot finale
+    st.dataframe(
+        format_df_for_display(
+            pivot_df,
+            int_cols=["Giacenza", "Vendite", "Movimentazioni"],
+            money_cols=["Costo Medio", "Valore Magazzino (€)"],
+        ),
+        use_container_width=True,
+        hide_index=True,
+    )
 
     st.markdown("---")
-    st.metric(label="💰 Valore totale magazzino (solo articoli in giacenza)", value=fmt_money(totale_valore))
+    st.metric("💰 Valore totale magazzino (solo articoli in giacenza)", fmt_money(totale_valore))
 
 
 if __name__ == '__main__':
