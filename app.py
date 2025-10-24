@@ -479,30 +479,73 @@ def page_movements():
 
 
 def page_analysis():
-    st.header("📊 Analisi Magazzino — Vista Pivot per Articolo")
+    st.header("📊 Analisi Magazzino — Vista Pivot con Filtri Avanzati")
 
-    # Carica dati articoli
+    # Selezione filtri
+    col1, col2, col3 = st.columns(3)
+    d_from = col1.date_input("Dal", value=date.today().replace(day=1))
+    d_to = col2.date_input("Al", value=date.today())
+    price_max = col3.number_input("Prezzo max (€)", min_value=0.0, value=0.0, step=0.10)
+
+    col4, col5, col6 = st.columns(3)
+    min_stock = int(col4.number_input("Giacenza minima", min_value=0, value=0))
+    max_stock = int(col5.number_input("Giacenza massima (0 = nessun limite)", min_value=0, value=0))
+    order_opt = col6.selectbox("Ordina per", ["SKU", "Più movimentato", "Più venduto", "Valore magazzino", "Costo medio"], index=0)
+
+    # Carica dati articoli e movimenti
     df_items = query_df("SELECT i.sku, i.type, i.season, i.size, i.cost, i.price, i.qty, s.name AS supplier FROM items i LEFT JOIN suppliers s ON s.id=i.supplier_id")
 
-    if df_items.empty:
-        st.warning("Nessun articolo presente nel database.")
+    mov = query_df(
+        "SELECT sku, mtype, qty, date(created_at) AS d FROM movements WHERE date(created_at) BETWEEN ? AND ?",
+        (d_from.isoformat(), d_to.isoformat()),
+    )
+
+    if mov.empty and df_items.empty:
+        st.warning("Nessun dato disponibile nel periodo selezionato.")
         return
 
-    # Calcola valore di magazzino per articolo
+    # Calcola valore di magazzino e vendite
     df_items['Valore Magazzino (€)'] = (df_items['qty'] * df_items['cost']).round(2)
+    vendite = mov[mov['mtype'].str.upper() == 'SCARICO'].groupby('sku')['qty'].sum().abs().reset_index().rename(columns={'qty': 'Vendite'}) if not mov.empty else pd.DataFrame(columns=['sku','Vendite'])
 
-    # Raggruppa come una pivot: per SKU
+    # Aggrega per articolo (pivot)
     pivot_df = df_items.groupby(['sku', 'type', 'season', 'size', 'supplier'], as_index=False).agg({
         'qty': 'sum',
         'cost': 'mean',
         'Valore Magazzino (€)': 'sum'
     }).rename(columns={'qty': 'Giacenza', 'cost': 'Costo Medio'})
 
-    # Totale valore magazzino
+    pivot_df = pivot_df.merge(vendite, on='sku', how='left').fillna({'Vendite': 0})
+
+    # Calcola totale movimenti per movimentazione
+    mov_count = mov.groupby('sku')['qty'].count().reset_index().rename(columns={'qty': 'Movimentazioni'}) if not mov.empty else pd.DataFrame(columns=['sku','Movimentazioni'])
+    pivot_df = pivot_df.merge(mov_count, on='sku', how='left').fillna({'Movimentazioni': 0})
+
+    # Applica filtri numerici
+    if price_max > 0:
+        pivot_df = pivot_df[pivot_df['Costo Medio'] <= price_max]
+    if min_stock > 0:
+        pivot_df = pivot_df[pivot_df['Giacenza'] >= min_stock]
+    if max_stock > 0:
+        pivot_df = pivot_df[pivot_df['Giacenza'] <= max_stock]
+
+    # Ordinamento dinamico
+    if order_opt == "Più venduto":
+        pivot_df = pivot_df.sort_values(by='Vendite', ascending=False)
+    elif order_opt == "Più movimentato":
+        pivot_df = pivot_df.sort_values(by='Movimentazioni', ascending=False)
+    elif order_opt == "Valore magazzino":
+        pivot_df = pivot_df.sort_values(by='Valore Magazzino (€)', ascending=False)
+    elif order_opt == "Costo medio":
+        pivot_df = pivot_df.sort_values(by='Costo Medio', ascending=False)
+    else:
+        pivot_df = pivot_df.sort_values(by='sku')
+
+    # Calcola totale valore magazzino
     totale_valore = pivot_df['Valore Magazzino (€)'].sum()
 
-    # Mostra tabella pivot
-    st.dataframe(format_df_for_display(pivot_df, int_cols=['Giacenza'], money_cols=['Costo Medio', 'Valore Magazzino (€)']), use_container_width=True, hide_index=True)
+    # Mostra pivot finale
+    st.dataframe(format_df_for_display(pivot_df, int_cols=['Giacenza', 'Vendite', 'Movimentazioni'], money_cols=['Costo Medio','Valore Magazzino (€)']), use_container_width=True, hide_index=True)
 
     st.markdown("---")
     st.metric(label="💰 Valore totale magazzino (solo articoli in giacenza)", value=fmt_money(totale_valore))
