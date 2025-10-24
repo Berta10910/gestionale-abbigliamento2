@@ -479,8 +479,7 @@ def page_movements():
 
 
 def page_analysis():
-     st.header("📈 Analisi Movimenti avanzata — Pivot e indicatori")
-
+    st.header("📈 Analisi e filtri")
     col1, col2, col3 = st.columns(3)
     d_from = col1.date_input("Dal", value=date.today().replace(day=1))
     d_to = col2.date_input("Al", value=date.today())
@@ -489,27 +488,33 @@ def page_analysis():
     col4, col5, col6 = st.columns(3)
     min_stock = int(col4.number_input("Giacenza min", min_value=0, value=0))
     max_stock = int(col5.number_input("Giacenza max (0 = nessun limite)", min_value=0, value=0))
+    # filtro per articolo (SKU)
     all_skus = query_df("SELECT sku FROM items ORDER BY sku")['sku'].tolist()
     sku_filter = col6.selectbox("Filtra per articolo (SKU)", ["(tutti)"] + all_skus)
 
+    # base articoli
     items_df = query_df("SELECT i.sku, i.type, i.season, i.size, i.cost, i.price, i.qty, s.name AS supplier FROM items i LEFT JOIN suppliers s ON s.id=i.supplier_id")
 
     if sku_filter != "(tutti)":
         items_df = items_df[items_df['sku'] == sku_filter]
-    if cost_max > 0:
+
+    # filtra per costo max
+    if cost_max and cost_max > 0:
         items_df = items_df[items_df['cost'] <= cost_max]
+    # filtra per giacenza
     if min_stock > 0:
         items_df = items_df[items_df['qty'] >= min_stock]
     if max_stock > 0:
         items_df = items_df[items_df['qty'] <= max_stock]
 
+    # aggregazione movimenti nel periodo
     mov = query_df(
         "SELECT sku, mtype, qty, date(created_at) AS d FROM movements WHERE date(created_at) BETWEEN ? AND ?",
         (d_from.isoformat(), d_to.isoformat()),
     )
-
     if not mov.empty:
-        agg = mov.pivot_table(index='sku', columns='mtype', values='qty', aggfunc='sum').fillna(0).reset_index()
+        agg = mov.pivot_table(index='sku', columns='mtype', values='qty', aggfunc='sum').fillna(0)
+        agg = agg.rename_axis(None, axis=1).reset_index()
         items_df = items_df.merge(agg, on='sku', how='left').fillna(0)
     else:
         for col in ['CARICO','SCARICO','RETTIFICA']:
@@ -517,29 +522,16 @@ def page_analysis():
 
     items_df['valore_a_costo'] = (items_df['qty'] * items_df['cost']).round(2)
     items_df['valore_a_vendita'] = (items_df['qty'] * items_df['price']).round(2)
-    items_df['uscite'] = items_df['SCARICO'].abs()
 
-    items_df['costo_medio'] = items_df.apply(
-        lambda r: r['cost'] if r['CARICO'] == 0 else round(r['valore_a_costo'] / max(r['CARICO'], 1), 2), axis=1
-    )
-    items_df['indice_rotazione'] = items_df.apply(
-        lambda r: 0 if r['qty'] == 0 else round(r['uscite'] / r['qty'], 2), axis=1
-    )
-
-    st.subheader("📊 Analisi dettagliata")
-    st.dataframe(items_df, use_container_width=True, hide_index=True)
+    st.subheader("Risultati")
+    items_disp = format_df_for_display(items_df, int_cols=["qty","CARICO","SCARICO","RETTIFICA"], money_cols=["cost","price","valore_a_costo","valore_a_vendita"])
+    st.dataframe(items_disp, use_container_width=True, hide_index=True)
 
     c1, c2, c3 = st.columns(3)
     c1.metric("Articoli filtrati", fmt_thousands(len(items_df)))
     c2.metric("Giacenza totale (filtro)", fmt_thousands(int(items_df['qty'].sum())))
     c3.metric("Valore a costo (filtro)", fmt_money(items_df['valore_a_costo'].sum()))
 
-    df_positive = items_df[items_df['qty'] > 0]
-    if not df_positive.empty:
-        costo_magazzino = (df_positive['qty'] * df_positive['cost']).sum()
-        st.markdown(f"### 💰 Costo Magazzino ad oggi: **{fmt_money(costo_magazzino)}**")
-    else:
-        st.markdown("### 💰 Costo Magazzino ad oggi: **€ 0,00**")
 
 if __name__ == '__main__':
     main()
