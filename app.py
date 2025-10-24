@@ -479,58 +479,33 @@ def page_movements():
 
 
 def page_analysis():
-    st.header("📈 Analisi e filtri")
-    col1, col2, col3 = st.columns(3)
-    d_from = col1.date_input("Dal", value=date.today().replace(day=1))
-    d_to = col2.date_input("Al", value=date.today())
-    cost_max = col3.number_input("Costo max (€)", min_value=0.0, value=0.0, step=0.10)
+    st.header("📊 Analisi Magazzino — Vista Pivot per Articolo")
 
-    col4, col5, col6 = st.columns(3)
-    min_stock = int(col4.number_input("Giacenza min", min_value=0, value=0))
-    max_stock = int(col5.number_input("Giacenza max (0 = nessun limite)", min_value=0, value=0))
-    # filtro per articolo (SKU)
-    all_skus = query_df("SELECT sku FROM items ORDER BY sku")['sku'].tolist()
-    sku_filter = col6.selectbox("Filtra per articolo (SKU)", ["(tutti)"] + all_skus)
+    # Carica dati articoli
+    df_items = query_df("SELECT i.sku, i.type, i.season, i.size, i.cost, i.price, i.qty, s.name AS supplier FROM items i LEFT JOIN suppliers s ON s.id=i.supplier_id")
 
-    # base articoli
-    items_df = query_df("SELECT i.sku, i.type, i.season, i.size, i.cost, i.price, i.qty, s.name AS supplier FROM items i LEFT JOIN suppliers s ON s.id=i.supplier_id")
+    if df_items.empty:
+        st.warning("Nessun articolo presente nel database.")
+        return
 
-    if sku_filter != "(tutti)":
-        items_df = items_df[items_df['sku'] == sku_filter]
+    # Calcola valore di magazzino per articolo
+    df_items['Valore Magazzino (€)'] = (df_items['qty'] * df_items['cost']).round(2)
 
-    # filtra per costo max
-    if cost_max and cost_max > 0:
-        items_df = items_df[items_df['cost'] <= cost_max]
-    # filtra per giacenza
-    if min_stock > 0:
-        items_df = items_df[items_df['qty'] >= min_stock]
-    if max_stock > 0:
-        items_df = items_df[items_df['qty'] <= max_stock]
+    # Raggruppa come una pivot: per SKU
+    pivot_df = df_items.groupby(['sku', 'type', 'season', 'size', 'supplier'], as_index=False).agg({
+        'qty': 'sum',
+        'cost': 'mean',
+        'Valore Magazzino (€)': 'sum'
+    }).rename(columns={'qty': 'Giacenza', 'cost': 'Costo Medio'})
 
-    # aggregazione movimenti nel periodo
-    mov = query_df(
-        "SELECT sku, mtype, qty, date(created_at) AS d FROM movements WHERE date(created_at) BETWEEN ? AND ?",
-        (d_from.isoformat(), d_to.isoformat()),
-    )
-    if not mov.empty:
-        agg = mov.pivot_table(index='sku', columns='mtype', values='qty', aggfunc='sum').fillna(0)
-        agg = agg.rename_axis(None, axis=1).reset_index()
-        items_df = items_df.merge(agg, on='sku', how='left').fillna(0)
-    else:
-        for col in ['CARICO','SCARICO','RETTIFICA']:
-            items_df[col] = 0
+    # Totale valore magazzino
+    totale_valore = pivot_df['Valore Magazzino (€)'].sum()
 
-    items_df['valore_a_costo'] = (items_df['qty'] * items_df['cost']).round(2)
-    items_df['valore_a_vendita'] = (items_df['qty'] * items_df['price']).round(2)
+    # Mostra tabella pivot
+    st.dataframe(format_df_for_display(pivot_df, int_cols=['Giacenza'], money_cols=['Costo Medio', 'Valore Magazzino (€)']), use_container_width=True, hide_index=True)
 
-    st.subheader("Risultati")
-    items_disp = format_df_for_display(items_df, int_cols=["qty","CARICO","SCARICO","RETTIFICA"], money_cols=["cost","price","valore_a_costo","valore_a_vendita"])
-    st.dataframe(items_disp, use_container_width=True, hide_index=True)
-
-    c1, c2, c3 = st.columns(3)
-    c1.metric("Articoli filtrati", fmt_thousands(len(items_df)))
-    c2.metric("Giacenza totale (filtro)", fmt_thousands(int(items_df['qty'].sum())))
-    c3.metric("Valore a costo (filtro)", fmt_money(items_df['valore_a_costo'].sum()))
+    st.markdown("---")
+    st.metric(label="💰 Valore totale magazzino (solo articoli in giacenza)", value=fmt_money(totale_valore))
 
 
 if __name__ == '__main__':
