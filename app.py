@@ -571,8 +571,7 @@ def page_movements():
 
     mov = query_df(sql, tuple(params))
 
-        st.dataframe(
-        mov,
+        st.dataframe(mov,
         use_container_width=True,
         hide_index=True,
         column_config={
