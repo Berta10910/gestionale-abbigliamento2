@@ -22,7 +22,20 @@ ma applica uno stile più curato.
 
 import os
 import sqlite3
-from contextlib import closing
+# compat: closing() può non essere disponibile in alcuni ambienti
+try:
+    from contextlib import closing
+except Exception:  # fallback di sicurezza
+    from contextlib import contextmanager
+    @contextmanager
+    def closing(obj):
+        try:
+            yield obj
+        finally:
+            try:
+                obj.close()
+            except Exception:
+                pass
 from datetime import datetime, date
 from typing import Tuple, Optional
 
