@@ -571,23 +571,7 @@ def page_movements():
 
     mov = query_df(sql, tuple(params))
 
-        st.dataframe(mov,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "id": st.column_config.NumberColumn("ID", format="%d"),
-            "created_at": st.column_config.DatetimeColumn("Data"),
-            "sku": st.column_config.TextColumn("SKU"),
-            "mtype": badge_col("Tipo"),
-            "causale": st.column_config.NumberColumn("Cod. Causale", format="%d", help="1=CARICO, 2=SCARICO, 3=RETTIFICA+, 4=RETTIFICA-"),
-            "qty": st.column_config.NumberColumn("Quantità", format="%d"),
-            "note": st.column_config.TextColumn("Nota"),
-        },
-    )
-
-    st.markdown("**Elimina movimento**")
-    if not mov.empty:
-        choice = st.selectbox(
+    st.dataframe(
         mov,
         use_container_width=True,
         hide_index=True,
@@ -595,7 +579,7 @@ def page_movements():
             "id": st.column_config.NumberColumn("ID", format="%d"),
             "created_at": st.column_config.DatetimeColumn("Data"),
             "sku": st.column_config.TextColumn("SKU"),
-            "mtype": badge_col("Tipo", options=badge_opts),
+            "mtype": badge_col("Tipo"),
             "causale": st.column_config.NumberColumn("Cod. Causale", format="%d", help="1=CARICO, 2=SCARICO, 3=RETTIFICA+, 4=RETTIFICA-"),
             "qty": st.column_config.NumberColumn("Quantità", format="%d"),
             "note": st.column_config.TextColumn("Nota"),
