@@ -87,17 +87,48 @@ def apply_global_css():
 
 
 def badge_col(label: str, *, help: str | None = None, options=None):
-    """Compat wrapper: usa BadgeColumn se disponibile, altrimenti TextColumn.
-    Mantiene la stessa firma essenziale che usiamo nel codice.
-    """
+    """Compat: prova a usare BadgeColumn, altrimenti ripiega su TextColumn."""
     try:
-        # Streamlit recenti
-        return badge_col(label, help=help, options=options)
+        BadgeColumn = st.column_config.BadgeColumn  # disponibile su Streamlit recenti
+        return BadgeColumn(label, help=help, options=options)
     except Exception:
-        # Streamlit più vecchi
         return st.column_config.TextColumn(label, help=help)
 
+
+
+def get_conn():
+    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
+    conn.execute("PRAGMA foreign_keys = ON;")
     return conn
+
+
+def kpi_card(title: str, value: str, sub: Optional[str] = None, icon: Optional[str] = None):
+    icon = icon or ""
+    with st.container():
+        st.markdown(
+            f"""
+            <div class=\"ui-card\">
+              <div class=\"kpi-title\">{icon} {title}</div>
+              <div class=\"kpi-value\">{value}</div>
+              {f'<div class=\"kpi-sub\">{sub}</div>' if sub else ''}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def page_header(title: str, subtitle: str = ""):
+    st.markdown(
+        f"""
+        <div style=\"display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:10px;gap:12px;\">
+          <div>
+            <h1 style=\"margin:0;font-weight:800;letter-spacing:.01em\">{title}</h1>
+            <div style=\"opacity:.75\">{subtitle}</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def init_db():
