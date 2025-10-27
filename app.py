@@ -95,6 +95,23 @@ def badge_col(label: str, *, help: str | None = None, options=None):
         return st.column_config.TextColumn(label, help=help)
 
 
+def badge_options_from(df: pd.DataFrame, col: str):
+    """Restituisce una lista di BadgeColumn.Option se disponibile, altrimenti None.
+    Evita AttributeError su versioni vecchie di Streamlit.
+    """
+    try:
+        Opt = st.column_config.BadgeColumn.Option
+    except Exception:
+        return None
+    if df is None or df.empty or col not in df.columns:
+        return None
+    try:
+        vals = sorted(pd.Series(df[col]).dropna().astype(str).unique())
+        return [Opt(v) for v in vals]
+    except Exception:
+        return None
+
+
 
 def get_conn():
     conn = sqlite3.connect(DB_PATH, check_same_thread=False)
@@ -506,9 +523,7 @@ def page_items():
         hide_index=True,
         column_config={
             "sku": st.column_config.TextColumn("SKU", help="Codice articolo"),
-            "type": badge_col("Tipo", help="Categoria",
-                options=[st.column_config.BadgeColumn.Option(t) for t in sorted(df['type'].dropna().unique())] if not df.empty else None,
-            ),
+            "type": badge_col("Tipo", help="Categoria", options=badge_options_from(df, 'type')),
             "season": badge_col("Stagione"),
             "size": badge_col("Taglia"),
             "cost": st.column_config.NumberColumn("Costo", format="€ %.2f"),
