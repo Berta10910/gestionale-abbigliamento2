@@ -316,12 +316,13 @@ def main():
     # Sidebar menu con icone
     menu = st.sidebar.radio(
         "Navigazione",
-        ["Dashboard", "Fornitori", "Articoli", "Movimenti", "Analisi"],
+        ["Dashboard", "Fornitori", "Articoli", "Movimenti", "Dettagli", "Analisi"],
         format_func=lambda x: {
             "Dashboard": "🏠 Dashboard",
             "Fornitori": "🏷️ Fornitori",
             "Articoli": "👕 Articoli",
             "Movimenti": "🔄 Movimenti",
+            "Dettagli": "🔎 Dettagli articolo",
             "Analisi": "📊 Analisi",
         }[x],
     )
@@ -334,11 +335,99 @@ def main():
         page_items()
     elif menu == "Movimenti":
         page_movements()
+    elif menu == "Dettagli":
+        page_item_details()
     else:
         page_analysis()
 
 
 # --------------- PAGES -----------------
+
+def get_item_stats(sku: str):
+    """Restituisce info base e KPI di un articolo."""
+    info = query_df(
+        "SELECT i.sku, i.type, i.season, i.size, i.cost, i.price, i.qty, s.name AS supplier "
+        "FROM items i LEFT JOIN suppliers s ON s.id=i.supplier_id WHERE i.sku=?",
+        (sku,),
+    )
+    if info.empty:
+        return None, None
+    row = info.iloc[0]
+    sold_df = query_df(
+        "SELECT SUM(ABS(qty)) AS sold FROM movements WHERE sku=? AND (UPPER(mtype)='SCARICO' OR causale=2)",
+        (sku,),
+    )
+    sold = int(sold_df.iloc[0]['sold'] or 0)
+    kpi = {
+        "qty": int(row["qty"] or 0),
+        "sold": sold,
+        "avg_cost": float(row["cost"] or 0.0),
+        "price": float(row["price"] or 0.0),
+    }
+    return row, kpi
+
+
+def render_item_kpis(row, kpi):
+    c1, c2, c3 = st.columns(3)
+    with c1: kpi_card("Giacenza attuale", f"{kpi['qty']} pz", sub=f"SKU {row['sku']}", icon="📦")
+    with c2: kpi_card("Totale venduto", f"{kpi['sold']} pz", sub="Somma scarichi", icon="🧾")
+    with c3: kpi_card("Costo medio", fmt_money(kpi['avg_cost']), sub=f"Prezzo: {fmt_money(kpi['price'])}", icon="💶")
+
+    st.caption(f"Tipo: **{row['type']}**, Stagione: **{row['season']}**, Taglia: **{row['size']}**, Fornitore: **{row['supplier'] or '-'}**")
+
+
+def page_item_details():
+    page_header("Dettagli articolo", "Scansiona o seleziona uno SKU per vedere i KPI")
+
+    t1, t2 = st.tabs(["📷 Scanner", "🔍 Seleziona"])
+
+    with t1:
+        colA, colB = st.columns([2,1])
+        scanned = colA.text_input("SKU letto (scanner USB)")
+        if scanned:
+            row, kpi = get_item_stats(scanned)
+            if row is None:
+                st.error("SKU non trovato.")
+            else:
+                render_item_kpis(row, kpi)
+                recent = query_df("SELECT created_at AS data, mtype AS tipo, qty AS qta, note FROM movements WHERE sku=? ORDER BY id DESC LIMIT 10", (scanned,))
+                st.subheader("Ultimi movimenti")
+                st.dataframe(recent, use_container_width=True, hide_index=True)
+
+        st.markdown("— oppure —")
+        st.caption("QR con fotocamera (richiede OpenCV)")
+        if cv2 is None:
+            st.warning("OpenCV non disponibile: pip install opencv-python")
+        cam_img = st.camera_input("Inquadra il QR dell'articolo")
+        if cam_img is not None and cv2 is not None:
+            decoded_sku = decode_qr_from_bytes(cam_img.getvalue())
+            if not decoded_sku:
+                st.error("QR non riconosciuto.")
+            else:
+                row, kpi = get_item_stats(decoded_sku)
+                if row is None:
+                    st.error("SKU non trovato.")
+                else:
+                    st.success(f"QR: {decoded_sku}")
+                    render_item_kpis(row, kpi)
+                    recent = query_df("SELECT created_at AS data, mtype AS tipo, qty AS qta, note FROM movements WHERE sku=? ORDER BY id DESC LIMIT 10", (decoded_sku,))
+                    st.subheader("Ultimi movimenti")
+                    st.dataframe(recent, use_container_width=True, hide_index=True)
+
+    with t2:
+        all_items = query_df("SELECT sku FROM items ORDER BY created_at DESC")
+        if all_items.empty:
+            st.info("Nessun articolo in archivio.")
+        else:
+            sku = st.selectbox("Scegli SKU", all_items['sku'])
+            row, kpi = get_item_stats(sku)
+            render_item_kpis(row, kpi)
+            recent = query_df("SELECT created_at AS data, mtype AS tipo, qty AS qta, note FROM movements WHERE sku=? ORDER BY id DESC LIMIT 10", (sku,))
+            st.subheader("Ultimi movimenti")
+            st.dataframe(recent, use_container_width=True, hide_index=True)
+
+
+
 
 def page_dashboard():
     page_header("Dashboard", "Panoramica rapida del tuo magazzino")
@@ -800,20 +889,4 @@ def page_analysis():
             asof_pivot,
             use_container_width=True,
             hide_index=True,
-            column_config={
-                "articolo": st.column_config.TextColumn("Articolo (SKU)"),
-                "tipo": badge_col("Tipo"),
-                "stagione": badge_col("Stagione"),
-                "taglia": badge_col("Taglia"),
-                "fornitore": st.column_config.TextColumn("Fornitore"),
-                "Giacenza alla data": st.column_config.NumberColumn("Giacenza", format="%d"),
-                "Costo Medio": st.column_config.NumberColumn("Costo Medio", format="€ %.2f"),
-                "Valore Magazzino alla data (€)": st.column_config.NumberColumn("Valore (€)", format="€ %.2f"),
-            },
-        )
-        st.markdown("---")
-        kpi_card("Valore totale magazzino alla data (giacenze > 0)", fmt_money(totale_asof), icon="💰")
-
-
-if __name__ == '__main__':
-    main()
+         
