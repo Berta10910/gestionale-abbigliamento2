@@ -52,43 +52,18 @@ def apply_global_css():
                 font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial, "Noto Sans", sans-serif;
             }
 
-            /* Hide default Streamlit decoration a bit */
             header[data-testid="stHeader"] { backdrop-filter: blur(6px); background: rgba(11,18,32,0.4); }
             #MainMenu { visibility: hidden; }
             footer { visibility: hidden; }
-
-            /* Page width */
             .block-container { padding-top: 1.2rem; padding-bottom: 3rem; max-width: 1200px; }
-
-            /* Card */
-            .ui-card {
-                background: linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%);
-                border: 1px solid rgba(255,255,255,0.08);
-                border-radius: 18px;
-                padding: 16px 18px;
-                box-shadow: 0 6px 20px rgba(0,0,0,0.25);
-            }
-
+            .ui-card { background: linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%); border: 1px solid rgba(255,255,255,0.08); border-radius: 18px; padding: 16px 18px; box-shadow: 0 6px 20px rgba(0,0,0,0.25); }
             .kpi-title { font-size: 0.85rem; color: #9CA3AF; margin-bottom: 6px; letter-spacing: .02em; }
             .kpi-value { font-size: 1.8rem; font-weight: 700; }
             .kpi-sub { font-size: .85rem; color: #9CA3AF; }
-
-            /* Buttons */
-            div.stButton > button, .stDownloadButton button {
-                border-radius: 12px; padding: 0.6rem 1rem; font-weight: 600;
-                border: 1px solid rgba(255,255,255,0.12);
-            }
+            div.stButton > button, .stDownloadButton button { border-radius: 12px; padding: 0.6rem 1rem; font-weight: 600; border: 1px solid rgba(255,255,255,0.12); }
             div.stButton > button:hover { transform: translateY(-1px); transition: transform .12s ease; }
-
-            /* Inputs */
-            .stTextInput input, .stNumberInput input, .stSelectbox [data-baseweb="select"] {
-                border-radius: 12px !important;
-            }
-
-            /* Dataframe tweaks */
+            .stTextInput input, .stNumberInput input, .stSelectbox [data-baseweb="select"] { border-radius: 12px !important; }
             .stDataFrame, .stDataEditor { border-radius: 14px; overflow: hidden; }
-
-            /* Sidebar brand */
             section[data-testid="stSidebar"]>div { padding-top: .5rem; }
             .brand-box { display:flex; align-items:center; gap:.6rem; padding:.4rem .6rem; border-radius:12px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.07); }
             .brand-title { font-weight:700; letter-spacing:.02em; }
@@ -98,41 +73,17 @@ def apply_global_css():
     )
 
 
-def kpi_card(title: str, value: str, sub: Optional[str] = None, icon: Optional[str] = None):
-    """Render di una mini card KPI con titolo, valore e sottotitolo."""
-    icon = icon or ""  # es. "📦"/"💶"
-    with st.container():
-        st.markdown(
-            f"""
-            <div class="ui-card">
-              <div class="kpi-title">{icon} {title}</div>
-              <div class="kpi-value">{value}</div>
-              {f'<div class="kpi-sub">{sub}</div>' if sub else ''}
-            </div>
-            """,
-            unsafe_allow_html=True,
-        )
+def badge_col(label: str, *, help: str | None = None, options=None):
+    """Compat wrapper: usa BadgeColumn se disponibile, altrimenti TextColumn.
+    Mantiene la stessa firma essenziale che usiamo nel codice.
+    """
+    try:
+        # Streamlit recenti
+        return badge_col(label, help=help, options=options)
+    except Exception:
+        # Streamlit più vecchi
+        return st.column_config.TextColumn(label, help=help)
 
-
-def page_header(title: str, subtitle: str = ""):
-    st.markdown(
-        f"""
-        <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:10px;gap:12px;">
-          <div>
-            <h1 style="margin:0;font-weight:800;letter-spacing:.01em">{title}</h1>
-            <div style="opacity:.75">{subtitle}</div>
-          </div>
-        </div>
-        """,
-        unsafe_allow_html=True,
-    )
-
-
-# ---------------- DB -----------------
-
-def get_conn():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.execute("PRAGMA foreign_keys = ON;")
     return conn
 
 
@@ -351,7 +302,7 @@ def page_suppliers():
     page_header("Fornitori", "Anagrafiche e tempi di consegna")
 
     with st.expander("➕ Nuovo/Modifica fornitore", expanded=True):
-        with st.form("supplier_form", clear_on_submit=True, border=False):
+        with st.form("supplier_form", clear_on_submit=True):
             c1, c2 = st.columns([1,2])
             code = c1.text_input("Codice (es. ZAR)")
             name = c2.text_input("Nome fornitore *")
@@ -475,7 +426,7 @@ def page_items():
                 st.success("Taglia eliminata.")
                 st.rerun()
 
-    with st.form("item_form", clear_on_submit=True, border=False):
+    with st.form("item_form", clear_on_submit=True):
         c1, c2, c3 = st.columns([2,1,1])
         supplier_name = c1.selectbox("Fornitore", suppliers['name'])
         type_ = c2.selectbox("Tipo abito", dict_types)
@@ -511,11 +462,11 @@ def page_items():
         hide_index=True,
         column_config={
             "sku": st.column_config.TextColumn("SKU", help="Codice articolo"),
-            "type": st.column_config.BadgeColumn("Tipo", help="Categoria",
+            "type": badge_col("Tipo", help="Categoria",
                 options=[st.column_config.BadgeColumn.Option(t) for t in sorted(df['type'].dropna().unique())] if not df.empty else None,
             ),
-            "season": st.column_config.BadgeColumn("Stagione"),
-            "size": st.column_config.BadgeColumn("Taglia"),
+            "season": badge_col("Stagione"),
+            "size": badge_col("Taglia"),
             "cost": st.column_config.NumberColumn("Costo", format="€ %.2f"),
             "price": st.column_config.NumberColumn("Prezzo", format="€ %.2f"),
             "qty": st.column_config.NumberColumn("Giacenza", format="%d"),
@@ -587,7 +538,7 @@ def page_movements():
                         st.success("Registrato.")
 
     with t2:
-        with st.form("mov_form", clear_on_submit=True, border=False):
+        with st.form("mov_form", clear_on_submit=True):
             c1, c2, c3 = st.columns([2,1,1])
             sku = c1.selectbox("Articolo (SKU)", items['sku'])
             mtype = c2.selectbox("Tipo", ['CARICO','SCARICO','RETTIFICA +','RETTIFICA -'])
@@ -620,14 +571,7 @@ def page_movements():
 
     mov = query_df(sql, tuple(params))
 
-    # Colori causali per badge
-    badge_opts = [
-        st.column_config.BadgeColumn.Option("CARICO", "green"),
-        st.column_config.BadgeColumn.Option("SCARICO", "red"),
-        st.column_config.BadgeColumn.Option("RETTIFICA", "blue"),
-    ]
-
-    st.dataframe(
+        st.dataframe(
         mov,
         use_container_width=True,
         hide_index=True,
@@ -635,7 +579,24 @@ def page_movements():
             "id": st.column_config.NumberColumn("ID", format="%d"),
             "created_at": st.column_config.DatetimeColumn("Data"),
             "sku": st.column_config.TextColumn("SKU"),
-            "mtype": st.column_config.BadgeColumn("Tipo", options=badge_opts),
+            "mtype": badge_col("Tipo"),
+            "causale": st.column_config.NumberColumn("Cod. Causale", format="%d", help="1=CARICO, 2=SCARICO, 3=RETTIFICA+, 4=RETTIFICA-"),
+            "qty": st.column_config.NumberColumn("Quantità", format="%d"),
+            "note": st.column_config.TextColumn("Nota"),
+        },
+    )
+
+    st.markdown("**Elimina movimento**")
+    if not mov.empty:
+        choice = st.selectbox(
+        mov,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "id": st.column_config.NumberColumn("ID", format="%d"),
+            "created_at": st.column_config.DatetimeColumn("Data"),
+            "sku": st.column_config.TextColumn("SKU"),
+            "mtype": badge_col("Tipo", options=badge_opts),
             "causale": st.column_config.NumberColumn("Cod. Causale", format="%d", help="1=CARICO, 2=SCARICO, 3=RETTIFICA+, 4=RETTIFICA-"),
             "qty": st.column_config.NumberColumn("Quantità", format="%d"),
             "note": st.column_config.TextColumn("Nota"),
@@ -748,9 +709,9 @@ def page_analysis():
             hide_index=True,
             column_config={
                 "articolo": st.column_config.TextColumn("Articolo (SKU)"),
-                "tipo": st.column_config.BadgeColumn("Tipo"),
-                "stagione": st.column_config.BadgeColumn("Stagione"),
-                "taglia": st.column_config.BadgeColumn("Taglia"),
+                "tipo": badge_col("Tipo"),
+                "stagione": badge_col("Stagione"),
+                "taglia": badge_col("Taglia"),
                 "fornitore": st.column_config.TextColumn("Fornitore"),
                 "Giacenza": st.column_config.NumberColumn("Giacenza", format="%d"),
                 "Costo Medio": st.column_config.NumberColumn("Costo Medio", format="€ %.2f"),
@@ -799,9 +760,9 @@ def page_analysis():
             hide_index=True,
             column_config={
                 "articolo": st.column_config.TextColumn("Articolo (SKU)"),
-                "tipo": st.column_config.BadgeColumn("Tipo"),
-                "stagione": st.column_config.BadgeColumn("Stagione"),
-                "taglia": st.column_config.BadgeColumn("Taglia"),
+                "tipo": badge_col("Tipo"),
+                "stagione": badge_col("Stagione"),
+                "taglia": badge_col("Taglia"),
                 "fornitore": st.column_config.TextColumn("Fornitore"),
                 "Giacenza alla data": st.column_config.NumberColumn("Giacenza", format="%d"),
                 "Costo Medio": st.column_config.NumberColumn("Costo Medio", format="€ %.2f"),
