@@ -1,11 +1,23 @@
 # -*- coding: utf-8 -*-
 """
-Gestionale negozio abbigliamento — funzionalità estese
-- Fornitori con campi: codice, nome, località, telefono, tempi di consegna (gg), P.IVA
-- Cataloghi (liste) per: Tipo abito, Stagione, Taglia — con possibilità di aggiungere nuove voci
-- Articoli con costi, prezzi, giacenza
-- Movimenti con data (Carico/Scarico/Rettifica) e storico
-- Dashboard + Analisi con filtri per data, costo e giacenza
+Gestionale negozio abbigliamento — RESTYLE UI/UX
+- Look & feel moderno con typography, colori coerenti e "cards"
+- Miglior uso di icone/emoji, badge e metriche
+- Tabelle con column_config (badge, number format) e azzurro desaturato
+- Sidebar raffinata con brand header
+- Mini utility per KPI cards ed helper di layout
+
+NOTE: aggiungi (opzionale) un file .streamlit/config.toml per i colori nativi di Streamlit:
+
+[theme]
+primaryColor="#2563EB"
+backgroundColor="#0B1220"
+secondaryBackgroundColor="#111827"
+textColor="#E5E7EB"
+font="sans serif"
+
+Puoi copiare la logica originale: questa versione mantiene le stesse funzionalità
+ma applica uno stile più curato.
 """
 
 import os
@@ -24,6 +36,97 @@ except Exception:
     cv2 = None
 
 DB_PATH = os.environ.get("APP_DB_PATH", "store.db")
+
+# -----------------------------------------------------
+# 🔧 UTIL: STILE & COMPONENTI UI
+# -----------------------------------------------------
+
+def apply_global_css():
+    st.markdown(
+        """
+        <style>
+            /* Typography: Inter + SF like */
+            @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+            html, body, [class*="css"]  {
+                font-family: 'Inter', system-ui, -apple-system, Segoe UI, Roboto, Ubuntu, Cantarell, 'Helvetica Neue', Arial, "Noto Sans", sans-serif;
+            }
+
+            /* Hide default Streamlit decoration a bit */
+            header[data-testid="stHeader"] { backdrop-filter: blur(6px); background: rgba(11,18,32,0.4); }
+            #MainMenu { visibility: hidden; }
+            footer { visibility: hidden; }
+
+            /* Page width */
+            .block-container { padding-top: 1.2rem; padding-bottom: 3rem; max-width: 1200px; }
+
+            /* Card */
+            .ui-card {
+                background: linear-gradient(180deg, rgba(255,255,255,0.04) 0%, rgba(255,255,255,0.02) 100%);
+                border: 1px solid rgba(255,255,255,0.08);
+                border-radius: 18px;
+                padding: 16px 18px;
+                box-shadow: 0 6px 20px rgba(0,0,0,0.25);
+            }
+
+            .kpi-title { font-size: 0.85rem; color: #9CA3AF; margin-bottom: 6px; letter-spacing: .02em; }
+            .kpi-value { font-size: 1.8rem; font-weight: 700; }
+            .kpi-sub { font-size: .85rem; color: #9CA3AF; }
+
+            /* Buttons */
+            div.stButton > button, .stDownloadButton button {
+                border-radius: 12px; padding: 0.6rem 1rem; font-weight: 600;
+                border: 1px solid rgba(255,255,255,0.12);
+            }
+            div.stButton > button:hover { transform: translateY(-1px); transition: transform .12s ease; }
+
+            /* Inputs */
+            .stTextInput input, .stNumberInput input, .stSelectbox [data-baseweb="select"] {
+                border-radius: 12px !important;
+            }
+
+            /* Dataframe tweaks */
+            .stDataFrame, .stDataEditor { border-radius: 14px; overflow: hidden; }
+
+            /* Sidebar brand */
+            section[data-testid="stSidebar"]>div { padding-top: .5rem; }
+            .brand-box { display:flex; align-items:center; gap:.6rem; padding:.4rem .6rem; border-radius:12px; background:rgba(255,255,255,0.06); border:1px solid rgba(255,255,255,0.07); }
+            .brand-title { font-weight:700; letter-spacing:.02em; }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+
+def kpi_card(title: str, value: str, sub: Optional[str] = None, icon: Optional[str] = None):
+    """Render di una mini card KPI con titolo, valore e sottotitolo."""
+    icon = icon or ""  # es. "📦"/"💶"
+    with st.container():
+        st.markdown(
+            f"""
+            <div class="ui-card">
+              <div class="kpi-title">{icon} {title}</div>
+              <div class="kpi-value">{value}</div>
+              {f'<div class="kpi-sub">{sub}</div>' if sub else ''}
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+
+
+def page_header(title: str, subtitle: str = ""):
+    st.markdown(
+        f"""
+        <div style="display:flex;align-items:flex-end;justify-content:space-between;margin-bottom:10px;gap:12px;">
+          <div>
+            <h1 style="margin:0;font-weight:800;letter-spacing:.01em">{title}</h1>
+            <div style="opacity:.75">{subtitle}</div>
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+
 
 # ---------------- DB -----------------
 
@@ -67,7 +170,7 @@ def init_db():
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         sku TEXT NOT NULL,
         mtype TEXT NOT NULL,
-        causale INTEGER NOT NULL DEFAULT 0, -- 1=CARICO, 2=SCARICO, 3=RETTIFICA+, 4=RETTIFICA-
+        causale INTEGER NOT NULL DEFAULT 0,
         qty INTEGER NOT NULL,
         note TEXT,
         created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
@@ -77,7 +180,7 @@ def init_db():
     with closing(get_conn()) as conn:
         cur = conn.cursor()
         cur.executescript(schema)
-        # --- Migrazioni leggere: aggiungi colonne se mancano ---
+        # Migrazioni leggere
         def add_col_if_missing(table, col, ddl):
             cur.execute(f"PRAGMA table_info({table})")
             cols = [r[1] for r in cur.fetchall()]
@@ -91,10 +194,9 @@ def init_db():
         add_col_if_missing('items','created_at','created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP')
         add_col_if_missing('items','cost','cost REAL')
         add_col_if_missing('items','price','price REAL')
-        # mov.causale (1,2,3,4)
         add_col_if_missing('movements','causale','causale INTEGER NOT NULL DEFAULT 0')
         conn.commit()
-        # Seed dizionari se vuoti
+        # Seed
         if cur.execute("SELECT COUNT(*) FROM dict_types").fetchone()[0] == 0:
             cur.executemany("INSERT INTO dict_types(type) VALUES (?)", [(t,) for t in ["TSHIRT","JEANS","GIUBBOTTO","ABITO"]])
         if cur.execute("SELECT COUNT(*) FROM dict_seasons").fetchone()[0] == 0:
@@ -107,9 +209,6 @@ def init_db():
 # --------------- UTILS ----------------
 
 def decode_qr_from_bytes(img_bytes: bytes) -> Optional[str]:
-    """Decodifica un QR code da bytes immagine usando OpenCV.
-    Restituisce il testo (SKU) oppure None se non trovato.
-    """
     if cv2 is None or not img_bytes:
         return None
     import numpy as np
@@ -125,7 +224,6 @@ def decode_qr_from_bytes(img_bytes: bytes) -> Optional[str]:
     return data.strip() or None
 
 
-
 def fmt_thousands(n: int) -> str:
     try:
         return f"{int(n):,}".replace(",", ".")
@@ -135,11 +233,10 @@ def fmt_thousands(n: int) -> str:
 
 def fmt_money(x: float) -> str:
     try:
-        # 1) format US 1,234,567.89 -> 2) swap first decimal dot with comma
         s = f"{float(x):,.2f}"
-        s = s.replace(",", "_")  # 1.234.567_89
-        s = s.replace(".", ",")  # 1,234,567_89
-        s = s.replace("_", ".")  # 1.234.567,89
+        s = s.replace(",", "_")
+        s = s.replace(".", ",")
+        s = s.replace("_", ".")
         return "€ " + s
     except Exception:
         return f"€ {x}"
@@ -160,7 +257,6 @@ def format_df_for_display(df: pd.DataFrame, int_cols=None, money_cols=None) -> p
     return dff
 
 
-
 def query_df(sql: str, params: Tuple = ()):  # -> DataFrame
     with closing(get_conn()) as conn:
         return pd.read_sql_query(sql, conn, params=params)
@@ -175,20 +271,48 @@ def execute(sql: str, params: Tuple = ()):  # -> lastrowid
 
 
 def recalc_qty_from_movements(sku: str):
-    # Con i segni: CARICO positivo, SCARICO negativo, RETTIFICA usa il segno immesso
-    df = query_df("SELECT qty FROM movements WHERE sku=?", (sku,))
+    df = query_df("SELECT qty FROM movements WHERE sku= ?", (sku,))
     total = int(df['qty'].sum()) if not df.empty else 0
     execute("UPDATE items SET qty=? WHERE sku=?", (total, sku))
 
 
 # --------------- UI --------------------
 
+def sidebar_brand():
+    with st.sidebar:
+        st.markdown(
+            """
+            <div class="brand-box">
+              <div style="font-size:1.3rem">🧥</div>
+              <div>
+                <div class="brand-title">Boutique Manager</div>
+                <div style="font-size:.8rem;opacity:.75">Gestionale Magazzino</div>
+              </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+        st.caption("Rapido. Elegante. Intuitivo.")
+
+
 def main():
-    st.set_page_config(page_title="Gestionale Negozio Abbigliamento", layout="wide")
-    st.title("🧾 Gestionale magazzino — Negozio di Abbigliamento")
+    st.set_page_config(page_title="Gestionale Abbigliamento", page_icon="🧥", layout="wide")
+    apply_global_css()
+    sidebar_brand()
     init_db()
 
-    menu = st.sidebar.radio("Menu", ["Dashboard", "Fornitori", "Articoli", "Movimenti", "Analisi"])
+    # Sidebar menu con icone
+    menu = st.sidebar.radio(
+        "Navigazione",
+        ["Dashboard", "Fornitori", "Articoli", "Movimenti", "Analisi"],
+        format_func=lambda x: {
+            "Dashboard": "🏠 Dashboard",
+            "Fornitori": "🏷️ Fornitori",
+            "Articoli": "👕 Articoli",
+            "Movimenti": "🔄 Movimenti",
+            "Analisi": "📊 Analisi",
+        }[x],
+    )
 
     if menu == "Dashboard":
         page_dashboard()
@@ -205,83 +329,111 @@ def main():
 # --------------- PAGES -----------------
 
 def page_dashboard():
-    st.header("📊 Dashboard")
+    page_header("Dashboard", "Panoramica rapida del tuo magazzino")
     items = query_df("SELECT COUNT(*) AS n, COALESCE(SUM(qty),0) AS tot FROM items")
     n = int(items.at[0, 'n']) if not items.empty else 0
     tot = int(items.at[0, 'tot']) if not items.empty else 0
-    c1, c2 = st.columns(2)
-    c1.metric("Articoli a catalogo", fmt_thousands(n))
-    c2.metric("Giacenza totale (pz)", fmt_thousands(tot))
-    st.caption("La giacenza è aggiornata dai movimenti.")
+
+    c1, c2, c3 = st.columns([1,1,1])
+    with c1: kpi_card("Articoli a catalogo", fmt_thousands(n), "Codici univoci", "📚")
+    with c2: kpi_card("Giacenza totale", fmt_thousands(tot) + " pz", "Aggiornata dai movimenti", "📦")
+    with c3:
+        # Valore indicativo magazzino
+        df = query_df("SELECT SUM(qty*cost) AS val FROM items")
+        val = float(df.iloc[0]['val'] or 0.0)
+        kpi_card("Valore magazzino", fmt_money(val), "A costo", "💶")
+
+    st.divider()
+    st.info("Suggerimento: usa la sezione **Analisi** per report più avanzati.")
 
 
 def page_suppliers():
-    st.header("🏷️ Fornitori")
-    with st.form("supplier_form", clear_on_submit=True):
-        c1, c2 = st.columns([1,2])
-        code = c1.text_input("Codice (es. ZAR)")
-        name = c2.text_input("Nome fornitore")
-        city = st.text_input("Località")
-        phone = st.text_input("Telefono")
-        lead = st.number_input("Tempi consegna (giorni)", min_value=0, value=0)
-        vat = st.text_input("P. IVA")
-        submitted = st.form_submit_button("Salva fornitore")
-        if submitted and name:
-            execute(
-                "INSERT OR REPLACE INTO suppliers(code, name, city, phone, lead_time_days, vat_number) VALUES (?,?,?,?,?,?)",
-                (code or None, name, city or None, phone or None, int(lead), vat or None),
-            )
-            st.success("Fornitore salvato.")
+    page_header("Fornitori", "Anagrafiche e tempi di consegna")
+
+    with st.expander("➕ Nuovo/Modifica fornitore", expanded=True):
+        with st.form("supplier_form", clear_on_submit=True, border=False):
+            c1, c2 = st.columns([1,2])
+            code = c1.text_input("Codice (es. ZAR)")
+            name = c2.text_input("Nome fornitore *")
+            c3, c4 = st.columns(2)
+            city = c3.text_input("Località")
+            phone = c4.text_input("Telefono")
+            c5, c6 = st.columns(2)
+            lead = c5.number_input("Tempi consegna (giorni)", min_value=0, value=0)
+            vat = c6.text_input("P. IVA")
+            colb1, colb2 = st.columns([1,4])
+            submitted = colb1.form_submit_button("💾 Salva")
+            if submitted and name:
+                execute(
+                    "INSERT OR REPLACE INTO suppliers(code, name, city, phone, lead_time_days, vat_number) VALUES (?,?,?,?,?,?)",
+                    (code or None, name, city or None, phone or None, int(lead), vat or None),
+                )
+                st.success("Fornitore salvato.")
 
     st.subheader("Elenco")
     df = query_df("SELECT id, code, name, city, phone, lead_time_days AS lead_days, vat_number AS piva FROM suppliers ORDER BY name")
-    st.dataframe(df.drop(columns=['id']), use_container_width=True, hide_index=True)
+    view = df.drop(columns=['id']) if not df.empty else df
+    st.dataframe(
+        view,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "code": st.column_config.TextColumn("Codice", help="Codice interno"),
+            "name": st.column_config.TextColumn("Nome", width="medium"),
+            "city": st.column_config.TextColumn("Località"),
+            "phone": st.column_config.TextColumn("Telefono"),
+            "lead_days": st.column_config.NumberColumn("Lead Time (gg)", format="%d"),
+            "piva": st.column_config.TextColumn("P. IVA"),
+        },
+    )
 
-    with st.expander("✏️ Modifica fornitore"):
+    with st.expander("✏️ Modifica / 🗑️ Elimina"):
         if df.empty:
             st.info("Nessun fornitore da modificare.")
         else:
-            sel = st.selectbox("Scegli", df['name'])
+            colm1, colm2 = st.columns(2)
+            sel = colm1.selectbox("Scegli fornitore", df['name'])
             row = df[df['name'] == sel].iloc[0]
-            n_code = st.text_input("Codice", value=row['code'] or "")
-            n_name = st.text_input("Nome", value=row['name'])
-            n_city = st.text_input("Località", value=row['city'] or "")
-            n_phone = st.text_input("Telefono", value=row['phone'] or "")
-            n_lead = st.number_input("Tempi consegna (giorni)", min_value=0, value=int(row['lead_days'] or 0))
-            n_vat = st.text_input("P. IVA", value=row['piva'] or "")
-            if st.button("Salva modifiche"):
-                execute("UPDATE suppliers SET code=?, name=?, city=?, phone=?, lead_time_days=?, vat_number=? WHERE id=?",
-                        (n_code or None, n_name, n_city or None, n_phone or None, int(n_lead), n_vat or None, int(df[df['name']==sel]['id'].iloc[0])))
+            n_code = colm2.text_input("Codice", value=row['code'] or "")
+            cmo1, cmo2 = st.columns(2)
+            n_city = cmo1.text_input("Località", value=row['city'] or "")
+            n_phone = cmo2.text_input("Telefono", value=row['phone'] or "")
+            cmo3, cmo4 = st.columns(2)
+            n_lead = cmo3.number_input("Tempi consegna (gg)", min_value=0, value=int(row['lead_days'] or 0))
+            n_vat = cmo4.text_input("P. IVA", value=row['piva'] or "")
+            cta1, cta2, cta3 = st.columns([1,1,4])
+            if cta1.button("💾 Aggiorna"):
+                execute(
+                    "UPDATE suppliers SET code=?, name=?, city=?, phone=?, lead_time_days=?, vat_number=? WHERE id=?",
+                    (n_code or None, sel, n_city or None, n_phone or None, int(n_lead), n_vat or None, int(df[df['name']==sel]['id'].iloc[0]))
+                )
                 st.success("Fornitore aggiornato.")
                 st.rerun()
-
-    st.subheader("Elimina fornitore")
-    if not df.empty:
-        to_del = st.selectbox("Seleziona fornitore", df.apply(lambda r: f"{r['id']} — {r['name']} ({r['code'] or ''})", axis=1))
-        if st.button("Elimina fornitore"):
-            fid = int(to_del.split(' — ')[0])
-            used = query_df("SELECT COUNT(*) AS n FROM items WHERE supplier_id=?", (fid,)).iloc[0]['n']
-            if used:
-                st.error("Impossibile eliminare: esistono articoli collegati.")
-            else:
-                execute("DELETE FROM suppliers WHERE id=?", (fid,))
-                st.success("Fornitore eliminato.")
-                st.rerun()
+            to_del = cta2.selectbox("Elimina…", df.apply(lambda r: f"{r['id']} — {r['name']} ({r['code'] or ''})", axis=1))
+            if cta2.button("🗑️ Elimina"):
+                fid = int(to_del.split(' — ')[0])
+                used = query_df("SELECT COUNT(*) AS n FROM items WHERE supplier_id=?", (fid,)).iloc[0]['n']
+                if used:
+                    st.error("Impossibile eliminare: esistono articoli collegati.")
+                else:
+                    execute("DELETE FROM suppliers WHERE id=?", (fid,))
+                    st.success("Fornitore eliminato.")
+                    st.rerun()
 
 
 def page_items():
-    st.header("👕 Catalogo articoli")
+    page_header("Articoli", "Catalogo prodotti, dizionari e prezzi")
     suppliers = query_df("SELECT id, name FROM suppliers ORDER BY name")
     if suppliers.empty:
         st.info("Inserisci prima almeno un fornitore nella sezione Fornitori.")
         return
 
     # Dizionari
-    dict_types = query_df("SELECT type FROM dict_types ORDER BY type")['type'].tolist()
-    dict_seasons = query_df("SELECT season FROM dict_seasons ORDER BY season")['season'].tolist()
-    dict_sizes = query_df("SELECT size FROM dict_sizes ORDER BY size")['size'].tolist()
+    dict_types = query_df("SELECT type FROM dict_types ORDER BY type")["type"].tolist()
+    dict_seasons = query_df("SELECT season FROM dict_seasons ORDER BY season")["season"].tolist()
+    dict_sizes = query_df("SELECT size FROM dict_sizes ORDER BY size")["size"].tolist()
 
-    with st.expander("➕ Gestione dizionari (Tipo/Stagione/Taglia)"):
+    with st.expander("🗂️ Gestione dizionari (Tipo / Stagione / Taglia)", expanded=False):
         colA, colB, colC = st.columns(3)
         new_t = colA.text_input("Nuovo tipo", key="new_type")
         if colA.button("Aggiungi tipo", key="btn_add_type") and new_t:
@@ -297,13 +449,11 @@ def page_items():
             st.rerun()
 
         st.markdown("---")
-        # Eliminazione sicura: consentita solo se non in uso
         dcol1, dcol2, dcol3 = st.columns(3)
         del_t = dcol1.selectbox("Elimina tipo (se non usato)", ["—"] + dict_types, key="del_type")
         if dcol1.button("Elimina tipo", key="btn_del_type") and del_t != "—":
             used = query_df("SELECT COUNT(*) AS n FROM items WHERE type=?", (del_t,)).iloc[0]['n']
-            if used:
-                st.error("Non puoi eliminare: è usato da alcuni articoli.")
+            if used: st.error("Non puoi eliminare: è usato da alcuni articoli.")
             else:
                 execute("DELETE FROM dict_types WHERE type=?", (del_t,))
                 st.success("Tipo eliminato.")
@@ -311,8 +461,7 @@ def page_items():
         del_s = dcol2.selectbox("Elimina stagione (se non usata)", ["—"] + dict_seasons, key="del_season")
         if dcol2.button("Elimina stagione", key="btn_del_season") and del_s != "—":
             used = query_df("SELECT COUNT(*) AS n FROM items WHERE season=?", (del_s,)).iloc[0]['n']
-            if used:
-                st.error("Non puoi eliminare: è usata da alcuni articoli.")
+            if used: st.error("Non puoi eliminare: è usata da alcuni articoli.")
             else:
                 execute("DELETE FROM dict_seasons WHERE season=?", (del_s,))
                 st.success("Stagione eliminata.")
@@ -320,14 +469,13 @@ def page_items():
         del_z = dcol3.selectbox("Elimina taglia (se non usata)", ["—"] + dict_sizes, key="del_size")
         if dcol3.button("Elimina taglia", key="btn_del_size") and del_z != "—":
             used = query_df("SELECT COUNT(*) AS n FROM items WHERE size=?", (del_z,)).iloc[0]['n']
-            if used:
-                st.error("Non puoi eliminare: è usata da alcuni articoli.")
+            if used: st.error("Non puoi eliminare: è usata da alcuni articoli.")
             else:
                 execute("DELETE FROM dict_sizes WHERE size=?", (del_z,))
                 st.success("Taglia eliminata.")
                 st.rerun()
 
-    with st.form("item_form", clear_on_submit=True):
+    with st.form("item_form", clear_on_submit=True, border=False):
         c1, c2, c3 = st.columns([2,1,1])
         supplier_name = c1.selectbox("Fornitore", suppliers['name'])
         type_ = c2.selectbox("Tipo abito", dict_types)
@@ -337,7 +485,7 @@ def page_items():
         cost = c5.number_input("Costo (€)", min_value=0.0, step=0.01)
         price = c6.number_input("Prezzo (€)", min_value=0.0, step=0.01)
         qty0 = c7.number_input("Quantità iniziale", min_value=0, step=1)
-        submitted = st.form_submit_button("Crea articolo")
+        submitted = st.form_submit_button("➕ Crea articolo")
         if submitted:
             sid = int(suppliers[suppliers['name'] == supplier_name]['id'].iloc[0])
             sku = f"{supplier_name[:3].upper()}-{type_[:3].upper()}-{season}-{size}"
@@ -353,94 +501,110 @@ def page_items():
             st.success(f"Articolo {sku} creato.")
 
     st.subheader("Elenco articoli")
-    df = query_df("SELECT i.sku, i.type, i.season, i.size, i.cost, i.price, i.qty, s.name AS supplier FROM items i LEFT JOIN suppliers s ON s.id=i.supplier_id ORDER BY i.created_at DESC")
-    df_disp = format_df_for_display(df, int_cols=["qty"], money_cols=["cost","price"])
-    st.dataframe(df_disp, use_container_width=True, hide_index=True)
+    df = query_df(
+        "SELECT i.sku, i.type, i.season, i.size, i.cost, i.price, i.qty, s.name AS supplier FROM items i LEFT JOIN suppliers s ON s.id=i.supplier_id ORDER BY i.created_at DESC"
+    )
+
+    st.dataframe(
+        df,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "sku": st.column_config.TextColumn("SKU", help="Codice articolo"),
+            "type": st.column_config.BadgeColumn("Tipo", help="Categoria",
+                options=[st.column_config.BadgeColumn.Option(t) for t in sorted(df['type'].dropna().unique())] if not df.empty else None,
+            ),
+            "season": st.column_config.BadgeColumn("Stagione"),
+            "size": st.column_config.BadgeColumn("Taglia"),
+            "cost": st.column_config.NumberColumn("Costo", format="€ %.2f"),
+            "price": st.column_config.NumberColumn("Prezzo", format="€ %.2f"),
+            "qty": st.column_config.NumberColumn("Giacenza", format="%d"),
+            "supplier": st.column_config.TextColumn("Fornitore"),
+        },
+    )
 
 
 def page_movements():
-    st.header("🔄 Movimenti di magazzino")
+    page_header("Movimenti", "Carico, scarico e rettifiche")
     items = query_df("SELECT sku, qty FROM items ORDER BY sku")
     if items.empty:
         st.info("Nessun articolo presente.")
         return
 
-    with st.expander("📷 Scanner barcode/QR (USB)"):
-        st.caption("Suggerimento: gli scanner USB digitano lo SKU e inviano Invio. Inquadra/leggi il barcode e verifica che lo SKU compaia nel campo.")
-        scanned = st.text_input("SKU letto", key="scan_input")
-        if scanned:
-            exists = query_df("SELECT sku, qty FROM items WHERE sku=?", (scanned,))
-            if exists.empty:
-                st.error("SKU non trovato.")
-            else:
-                st.success(f"Trovato {scanned} — Giacenza attuale: {int(exists.iloc[0]['qty'])}")
-                sc1, sc2 = st.columns([1,1])
-                mtype_s = sc1.selectbox("Tipo movimento", ['CARICO','SCARICO','RETTIFICA +','RETTIFICA -'], key="scan_mtype_usb")
-                qty_s = int(sc2.number_input("Quantità", value=1, min_value=1, step=1, key="scan_qty_usb"))
-                note_s = st.text_input("Nota", key="scan_note_usb")
-                if st.button("Registra (da scanner USB)"):
-                    signed = (qty_s if mtype_s=='CARICO' else -qty_s if mtype_s=='SCARICO' else qty_s if mtype_s=='RETTIFICA +' else -qty_s)
-                    execute(
-                        "INSERT INTO movements(sku, mtype, causale, qty, note, created_at) VALUES (?,?,?,?,?,?)",
-                        (scanned, 'RETTIFICA' if mtype_s.startswith('RETTIFICA') else mtype_s, 1 if mtype_s=='CARICO' else 2 if mtype_s=='SCARICO' else 3 if mtype_s=='RETTIFICA +' else 4, signed, note_s or None, datetime.now().isoformat(timespec='seconds')),
-                    )
-                    execute("UPDATE items SET qty = qty + ? WHERE sku = ?", (signed, scanned))
-                    st.success("Registrato.")
+    t1, t2 = st.tabs(["📷 Scanner", "✍️ Manuale"])
 
-    with st.expander("📱 Scanner con fotocamera (QR)"):
-        st.caption("Usa la fotocamera del telefono per leggere un **QR code** con dentro lo SKU. (Serve OpenCV: `pip install opencv-python`)")
-        if cv2 is None:
-            st.warning("Modulo OpenCV non disponibile. Installa con: pip install opencv-python")
-        cam_img = st.camera_input("Inquadra il QR dell'articolo")
-        decoded_sku = None
-        if cam_img is not None:
-            decoded_sku = decode_qr_from_bytes(cam_img.getvalue())
-            if not decoded_sku:
-                st.error("Nessun QR riconosciuto. Assicurati che l'etichetta sia un QR e ben a fuoco.")
-        if decoded_sku:
-            st.success(f"QR letto: {decoded_sku}")
-            exists = query_df("SELECT sku, qty FROM items WHERE sku=?", (decoded_sku,))
-            if exists.empty:
-                st.error("SKU non trovato nel catalogo.")
-            else:
-                st.info(f"Giacenza attuale: {int(exists.iloc[0]['qty'])}")
-                qc1, qc2 = st.columns([1,1])
-                mtype_cam = qc1.selectbox("Tipo movimento", ['CARICO','SCARICO','RETTIFICA +','RETTIFICA -'], key="scan_mtype_cam")
-                qty_cam = int(qc2.number_input("Quantità", value=1, min_value=1, step=1, key="scan_qty_cam"))
-                note_cam = st.text_input("Nota", key="scan_note_cam")
-                if st.button("Registra (da fotocamera)"):
-                    signed = (qty_cam if mtype_cam=='CARICO' else -qty_cam if mtype_cam=='SCARICO' else qty_cam if mtype_cam=='RETTIFICA +' else -qty_cam)
-                    execute(
-                        "INSERT INTO movements(sku, mtype, causale, qty, note, created_at) VALUES (?,?,?,?,?,?)",
-                        (decoded_sku, 'RETTIFICA' if mtype_cam.startswith('RETTIFICA') else mtype_cam, 1 if mtype_cam=='CARICO' else 2 if mtype_cam=='SCARICO' else 3 if mtype_cam=='RETTIFICA +' else 4, signed, note_cam or None, datetime.now().isoformat(timespec='seconds')),
-                    )
-                    execute("UPDATE items SET qty = qty + ? WHERE sku = ?", (signed, decoded_sku))
-                    st.success("Registrato.")
+    with t1:
+        with st.expander("Scanner barcode/QR (USB)", expanded=True):
+            st.caption("Gli scanner USB digitano lo SKU e inviano Invio. Inquadra/leggi il barcode e verifica che lo SKU compaia nel campo.")
+            scanned = st.text_input("SKU letto", key="scan_input")
+            if scanned:
+                exists = query_df("SELECT sku, qty FROM items WHERE sku=?", (scanned,))
+                if exists.empty:
+                    st.error("SKU non trovato.")
+                else:
+                    st.success(f"Trovato {scanned} — Giacenza attuale: {int(exists.iloc[0]['qty'])}")
+                    sc1, sc2 = st.columns([1,1])
+                    mtype_s = sc1.selectbox("Tipo movimento", ['CARICO','SCARICO','RETTIFICA +','RETTIFICA -'], key="scan_mtype_usb")
+                    qty_s = int(sc2.number_input("Quantità", value=1, min_value=1, step=1, key="scan_qty_usb"))
+                    note_s = st.text_input("Nota", key="scan_note_usb")
+                    if st.button("Registra (da scanner USB)"):
+                        signed = (qty_s if mtype_s=='CARICO' else -qty_s if mtype_s=='SCARICO' else qty_s if mtype_s=='RETTIFICA +' else -qty_s)
+                        execute(
+                            "INSERT INTO movements(sku, mtype, causale, qty, note, created_at) VALUES (?,?,?,?,?,?)",
+                            (scanned, 'RETTIFICA' if mtype_s.startswith('RETTIFICA') else mtype_s, 1 if mtype_s=='CARICO' else 2 if mtype_s=='SCARICO' else 3 if mtype_s=='RETTIFICA +' else 4, signed, note_s or None, datetime.now().isoformat(timespec='seconds')),
+                        )
+                        execute("UPDATE items SET qty = qty + ? WHERE sku = ?", (signed, scanned))
+                        st.success("Registrato.")
 
-    with st.form("mov_form", clear_on_submit=True):
-        c1, c2, c3 = st.columns([2,1,1])
-        sku = c1.selectbox("Articolo (SKU)", items['sku'])
-        mtype = c2.selectbox("Tipo", ['CARICO','SCARICO','RETTIFICA +','RETTIFICA -'])
-        qty = int(c3.number_input("Quantità", value=1, min_value=1, step=1))
-        note = st.text_input("Nota (opzionale)")
-        d = st.date_input("Data movimento", value=date.today())
-        submitted = st.form_submit_button("Registra movimento")
-        if submitted:
-            signed = (
-            qty if mtype=='CARICO' else
-            -qty if mtype=='SCARICO' else
-            qty if mtype=='RETTIFICA +' else
-            -qty
-        )
-            execute(
-                "INSERT INTO movements(sku, mtype, causale, qty, note, created_at) VALUES (?,?,?,?,?,?)",
-                (sku, 'RETTIFICA' if mtype.startswith('RETTIFICA') else mtype, 1 if mtype=='CARICO' else 2 if mtype=='SCARICO' else 3 if mtype=='RETTIFICA +' else 4, signed, note or None, datetime.combine(d, datetime.min.time()).isoformat()),
-            )
-            execute("UPDATE items SET qty = qty + ? WHERE sku = ?", (signed, sku))
-            st.success("Movimento registrato.")
+        with st.expander("Scanner con fotocamera (QR)", expanded=False):
+            st.caption("Usa la fotocamera del telefono per leggere un **QR code** con dentro lo SKU. (Serve OpenCV: `pip install opencv-python`)")
+            if cv2 is None:
+                st.warning("Modulo OpenCV non disponibile. Installa con: pip install opencv-python")
+            cam_img = st.camera_input("Inquadra il QR dell'articolo")
+            decoded_sku = None
+            if cam_img is not None:
+                decoded_sku = decode_qr_from_bytes(cam_img.getvalue())
+                if not decoded_sku:
+                    st.error("Nessun QR riconosciuto. Assicurati che l'etichetta sia un QR e ben a fuoco.")
+            if decoded_sku:
+                st.success(f"QR letto: {decoded_sku}")
+                exists = query_df("SELECT sku, qty FROM items WHERE sku=?", (decoded_sku,))
+                if exists.empty:
+                    st.error("SKU non trovato nel catalogo.")
+                else:
+                    st.info(f"Giacenza attuale: {int(exists.iloc[0]['qty'])}")
+                    qc1, qc2 = st.columns([1,1])
+                    mtype_cam = qc1.selectbox("Tipo movimento", ['CARICO','SCARICO','RETTIFICA +','RETTIFICA -'], key="scan_mtype_cam")
+                    qty_cam = int(qc2.number_input("Quantità", value=1, min_value=1, step=1, key="scan_qty_cam"))
+                    note_cam = st.text_input("Nota", key="scan_note_cam")
+                    if st.button("Registra (da fotocamera)"):
+                        signed = (qty_cam if mtype_cam=='CARICO' else -qty_cam if mtype_cam=='SCARICO' else qty_cam if mtype_cam=='RETTIFICA +' else -qty_cam)
+                        execute(
+                            "INSERT INTO movements(sku, mtype, causale, qty, note, created_at) VALUES (?,?,?,?,?,?)",
+                            (decoded_sku, 'RETTIFICA' if mtype_cam.startswith('RETTIFICA') else mtype_cam, 1 if mtype_cam=='CARICO' else 2 if mtype_cam=='SCARICO' else 3 if mtype_cam=='RETTIFICA +' else 4, signed, note_cam or None, datetime.now().isoformat(timespec='seconds')),
+                        )
+                        execute("UPDATE items SET qty = qty + ? WHERE sku = ?", (signed, decoded_sku))
+                        st.success("Registrato.")
+
+    with t2:
+        with st.form("mov_form", clear_on_submit=True, border=False):
+            c1, c2, c3 = st.columns([2,1,1])
+            sku = c1.selectbox("Articolo (SKU)", items['sku'])
+            mtype = c2.selectbox("Tipo", ['CARICO','SCARICO','RETTIFICA +','RETTIFICA -'])
+            qty = int(c3.number_input("Quantità", value=1, min_value=1, step=1))
+            note = st.text_input("Nota (opzionale)")
+            d = st.date_input("Data movimento", value=date.today())
+            submitted = st.form_submit_button("📥 Registra movimento")
+            if submitted:
+                signed = (qty if mtype=='CARICO' else -qty if mtype=='SCARICO' else qty if mtype=='RETTIFICA +' else -qty)
+                execute(
+                    "INSERT INTO movements(sku, mtype, causale, qty, note, created_at) VALUES (?,?,?,?,?,?)",
+                    (sku, 'RETTIFICA' if mtype.startswith('RETTIFICA') else mtype, 1 if mtype=='CARICO' else 2 if mtype=='SCARICO' else 3 if mtype=='RETTIFICA +' else 4, signed, note or None, datetime.combine(d, datetime.min.time()).isoformat()),
+                )
+                execute("UPDATE items SET qty = qty + ? WHERE sku = ?", (signed, sku))
+                st.success("Movimento registrato.")
 
     st.subheader("Storico movimenti")
-    # Filtri per elenco movimenti
     f1, f2, f3 = st.columns(3)
     d_from = f1.date_input("Dal", value=date.today().replace(day=1), key="mov_from")
     d_to = f2.date_input("Al", value=date.today(), key="mov_to")
@@ -455,8 +619,28 @@ def page_movements():
     sql += " ORDER BY id DESC LIMIT 200"
 
     mov = query_df(sql, tuple(params))
-    mov_disp = format_df_for_display(mov, int_cols=["qty"])
-    st.dataframe(mov_disp, use_container_width=True, hide_index=True)
+
+    # Colori causali per badge
+    badge_opts = [
+        st.column_config.BadgeColumn.Option("CARICO", "green"),
+        st.column_config.BadgeColumn.Option("SCARICO", "red"),
+        st.column_config.BadgeColumn.Option("RETTIFICA", "blue"),
+    ]
+
+    st.dataframe(
+        mov,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "id": st.column_config.NumberColumn("ID", format="%d"),
+            "created_at": st.column_config.DatetimeColumn("Data"),
+            "sku": st.column_config.TextColumn("SKU"),
+            "mtype": st.column_config.BadgeColumn("Tipo", options=badge_opts),
+            "causale": st.column_config.NumberColumn("Cod. Causale", format="%d", help="1=CARICO, 2=SCARICO, 3=RETTIFICA+, 4=RETTIFICA-"),
+            "qty": st.column_config.NumberColumn("Quantità", format="%d"),
+            "note": st.column_config.TextColumn("Nota"),
+        },
+    )
 
     st.markdown("**Elimina movimento**")
     if not mov.empty:
@@ -465,7 +649,7 @@ def page_movements():
             mov.apply(lambda r: f"{r['id']} — {r['created_at']} — {r['sku']} — {r['mtype']} {r['qty']}", axis=1),
             key="mov_del_select",
         )
-        if st.button("Elimina movimento", key="mov_del_btn"):
+        if st.button("🗑️ Elimina movimento", key="mov_del_btn"):
             mid = int(choice.split(' — ')[0])
             row = query_df("SELECT sku FROM movements WHERE id=?", (mid,))
             if row.empty:
@@ -479,22 +663,19 @@ def page_movements():
 
 
 def page_analysis():
-    st.header("📊 Analisi Magazzino — Vista Pivot con Filtri e Giacenza a Data")
+    page_header("Analisi", "Pivot, filtri e giacenze storiche")
 
-    # --- Scelta modalità ---
     mode = st.radio(
         "Modalità di analisi",
-        ["Periodo (movimenti e pivot)", "Storica al… (giacenza e valore a una data)"] ,
+        ["Periodo (movimenti e pivot)", "Storica al… (giacenza e valore a una data)"],
         horizontal=True,
     )
 
-    # --- Filtri comuni ---
     col1, col2, col3 = st.columns(3)
     price_max = col1.number_input("Prezzo/Costo massimo (€)", min_value=0.0, value=0.0, step=0.10)
     min_stock = int(col2.number_input("Giacenza minima", min_value=0, value=0))
     max_stock = int(col3.number_input("Giacenza massima (0 = nessun limite)", min_value=0, value=0))
 
-    # --- Dati base articoli ---
     df_items = query_df(
         "SELECT i.sku AS articolo, i.type AS tipo, i.season AS stagione, i.size AS taglia, "
         "i.cost AS costo, i.price AS prezzo, i.qty AS giacenza, s.name AS fornitore "
@@ -504,9 +685,6 @@ def page_analysis():
         st.warning("Nessun articolo presente nel database.")
         return
 
-    # ------------------------------------------------------------
-    # MODALITÀ 1: Pivot di periodo (come prima, con movimenti)
-    # ------------------------------------------------------------
     if mode == "Periodo (movimenti e pivot)":
         c1, c2, c3 = st.columns(3)
         d_from = c1.date_input("Dal", value=date.today().replace(day=1))
@@ -523,22 +701,18 @@ def page_analysis():
             (d_from.isoformat(), d_to.isoformat()),
         )
 
-        # Valore attuale a costo (per vista di periodo)
         df_items["Valore Magazzino (€)"] = (df_items["giacenza"] * df_items["costo"]).round(2)
 
-        # Vendite = somma assoluta scarichi nel periodo
         vendite = (
             mov[mov["tipo_movimento"].str.upper() == "SCARICO"].groupby("articolo")["quantita"].sum().abs().reset_index().rename(columns={"quantita": "Vendite"})
             if not mov.empty else pd.DataFrame(columns=["articolo", "Vendite"])
         )
 
-        # Movimentazioni = numero righe movimento nel periodo
         mov_count = (
             mov.groupby("articolo")["quantita"].count().reset_index().rename(columns={"quantita": "Movimentazioni"})
             if not mov.empty else pd.DataFrame(columns=["articolo", "Movimentazioni"])
         )
 
-        # Pivot per articolo
         pivot_df = (
             df_items.groupby(["articolo", "tipo", "stagione", "taglia", "fornitore"], as_index=False)
             .agg({"giacenza": "sum", "costo": "mean", "Valore Magazzino (€)": "sum"})
@@ -547,7 +721,6 @@ def page_analysis():
         pivot_df = pivot_df.merge(vendite, on="articolo", how="left").merge(mov_count, on="articolo", how="left")
         pivot_df[["Vendite", "Movimentazioni"]] = pivot_df[["Vendite", "Movimentazioni"]].fillna(0)
 
-        # Filtri numerici
         if price_max > 0:
             pivot_df = pivot_df[pivot_df["Costo Medio"] <= price_max]
         if min_stock > 0:
@@ -555,7 +728,6 @@ def page_analysis():
         if max_stock > 0:
             pivot_df = pivot_df[pivot_df["Giacenza"] <= max_stock]
 
-        # Ordinamento
         if order_opt == "Più venduto":
             pivot_df = pivot_df.sort_values(by="Vendite", ascending=False)
         elif order_opt == "Più movimentato":
@@ -571,37 +743,38 @@ def page_analysis():
 
         st.subheader("📊 Vista di periodo")
         st.dataframe(
-            format_df_for_display(
-                pivot_df,
-                int_cols=["Giacenza", "Vendite", "Movimentazioni"],
-                money_cols=["Costo Medio", "Valore Magazzino (€)"]
-            ),
+            pivot_df,
             use_container_width=True,
             hide_index=True,
+            column_config={
+                "articolo": st.column_config.TextColumn("Articolo (SKU)"),
+                "tipo": st.column_config.BadgeColumn("Tipo"),
+                "stagione": st.column_config.BadgeColumn("Stagione"),
+                "taglia": st.column_config.BadgeColumn("Taglia"),
+                "fornitore": st.column_config.TextColumn("Fornitore"),
+                "Giacenza": st.column_config.NumberColumn("Giacenza", format="%d"),
+                "Costo Medio": st.column_config.NumberColumn("Costo Medio", format="€ %.2f"),
+                "Valore Magazzino (€)": st.column_config.NumberColumn("Valore Magazzino (€)", format="€ %.2f"),
+                "Vendite": st.column_config.NumberColumn("Vendite", format="%d"),
+                "Movimentazioni": st.column_config.NumberColumn("Movimentazioni", format="%d"),
+            },
         )
         st.markdown("---")
-        st.metric("💰 Valore totale magazzino (articoli mostrati)", fmt_money(totale_valore))
+        kpi_card("Valore totale magazzino (filtrato)", fmt_money(totale_valore), icon="💰")
 
-    # -----------------------------------------------------------------
-    # MODALITÀ 2: Giacenza e Valore a una certa data (AS-OF DATE)
-    # -----------------------------------------------------------------
     else:
-        c1, c2 = st.columns([1,2])
+        c1, _ = st.columns([1,2])
         ref_date = c1.date_input("Data di riferimento (giacenza storica)", value=date.today())
-        st.caption("La giacenza viene calcolata come somma algebrica dei movimenti fino alle 23:59:59 della data selezionata. Il valore è stimato con il costo articolo corrente.")
+        st.caption("La giacenza è la somma dei movimenti fino alle 23:59:59 della data selezionata. Valore a costo attuale.")
 
-        # Somma movimenti fino alla data (inclusa)
         ref_dt_end = f"{ref_date.isoformat()} 23:59:59"
         mov_to_ref = query_df(
             "SELECT sku AS articolo, SUM(qty) AS giacenza_ref FROM movements WHERE datetime(created_at) <= ? GROUP BY sku",
             (ref_dt_end,),
         )
-
-        # Unione con anagrafica articoli
         asof_df = df_items.merge(mov_to_ref, on="articolo", how="left")
         asof_df["giacenza_ref"] = asof_df["giacenza_ref"].fillna(0).astype(int)
 
-        # Applica filtri sulla giacenza storica e costo
         if price_max > 0:
             asof_df = asof_df[asof_df["costo"] <= price_max]
         if min_stock > 0:
@@ -609,10 +782,7 @@ def page_analysis():
         if max_stock > 0:
             asof_df = asof_df[asof_df["giacenza_ref"] <= max_stock]
 
-        # Valore magazzino alla data (usa costo attuale come proxy)
         asof_df["Valore Magazzino alla data (€)"] = (asof_df["giacenza_ref"] * asof_df["costo"]).round(2)
-
-        # Vista pivot per articolo
         asof_pivot = (
             asof_df.groupby(["articolo", "tipo", "stagione", "taglia", "fornitore"], as_index=False)
             .agg({"giacenza_ref": "sum", "costo": "mean", "Valore Magazzino alla data (€)": "sum"})
@@ -620,21 +790,26 @@ def page_analysis():
             .sort_values(by="articolo")
         )
 
-        # Totale valore alla data (solo articoli mostrati e con giacenza > 0)
         totale_asof = asof_pivot.loc[asof_pivot["Giacenza alla data"] > 0, "Valore Magazzino alla data (€)"].sum()
 
         st.subheader("📅 Vista storica al giorno selezionato")
         st.dataframe(
-            format_df_for_display(
-                asof_pivot,
-                int_cols=["Giacenza alla data"],
-                money_cols=["Costo Medio", "Valore Magazzino alla data (€)"]
-            ),
+            asof_pivot,
             use_container_width=True,
             hide_index=True,
+            column_config={
+                "articolo": st.column_config.TextColumn("Articolo (SKU)"),
+                "tipo": st.column_config.BadgeColumn("Tipo"),
+                "stagione": st.column_config.BadgeColumn("Stagione"),
+                "taglia": st.column_config.BadgeColumn("Taglia"),
+                "fornitore": st.column_config.TextColumn("Fornitore"),
+                "Giacenza alla data": st.column_config.NumberColumn("Giacenza", format="%d"),
+                "Costo Medio": st.column_config.NumberColumn("Costo Medio", format="€ %.2f"),
+                "Valore Magazzino alla data (€)": st.column_config.NumberColumn("Valore (€)", format="€ %.2f"),
+            },
         )
         st.markdown("---")
-        st.metric("💰 Valore totale magazzino alla data (solo giacenze > 0)", fmt_money(totale_asof))
+        kpi_card("Valore totale magazzino alla data (giacenze > 0)", fmt_money(totale_asof), icon="💰")
 
 
 if __name__ == '__main__':
