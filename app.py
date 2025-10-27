@@ -885,8 +885,26 @@ def page_analysis():
         totale_asof = asof_pivot.loc[asof_pivot["Giacenza alla data"] > 0, "Valore Magazzino alla data (€)"].sum()
 
         st.subheader("📅 Vista storica al giorno selezionato")
-        st.dataframe(
-            asof_pivot,
-            use_container_width=True,
-            hide_index=True,
+    st.dataframe(
+        asof_pivot,
+        use_container_width=True,
+        hide_index=True,
+        column_config={
+            "articolo": st.column_config.TextColumn("Articolo (SKU)"),
+            "tipo": badge_col("Tipo"),
+            "stagione": badge_col("Stagione"),
+            "taglia": badge_col("Taglia"),
+            "fornitore": st.column_config.TextColumn("Fornitore"),
+            "Giacenza alla data": st.column_config.NumberColumn("Giacenza", format="%d"),
+            "Costo Medio": st.column_config.NumberColumn("Costo Medio", format="€ %.2f"),
+            "Valore Magazzino alla data (€)": st.column_config.NumberColumn("Valore (€)", format="€ %.2f"),
+        },
+    )
+
+    st.markdown("---")
+    kpi_card("Valore totale magazzino alla data (giacenze > 0)", fmt_money(totale_asof), icon="💰")
+
+
+if __name__ == '__main__':
+    main()
          
