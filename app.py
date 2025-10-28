@@ -663,90 +663,90 @@ def page_movements():
                         execute("UPDATE items SET qty = qty + ? WHERE sku = ?", (signed, scanned))
                         st.success("Registrato.")
 
-       with st.expander("📹 Scanner live (QR + EAN/Code128)", expanded=True):
-    st.caption("Lettura continua via webcam. Seleziona 'Auto' per registrare subito.")
+        with st.expander("📹 Scanner live (QR + EAN/Code128)", expanded=True):
+            st.caption("Lettura continua via webcam. Seleziona 'Auto' per registrare subito.")
 
-    # antirafﬁca / stato
-    if "detected_sku" not in st.session_state:
-        st.session_state["detected_sku"] = None
-    if "last_fire_ts" not in st.session_state:
-        st.session_state["last_fire_ts"] = 0.0
+            # antirafﬁca / stato
+            if "detected_sku" not in st.session_state:
+                st.session_state["detected_sku"] = None
+            if "last_fire_ts" not in st.session_state:
+                st.session_state["last_fire_ts"] = 0.0
 
-    auto_register = st.checkbox("Auto-registra SCARICO 1 pz al rilevamento", value=False)
+            auto_register = st.checkbox("Auto-registra SCARICO 1 pz al rilevamento", value=False)
 
-    qr = cv2.QRCodeDetector() if cv2 is not None else None
+            qr = cv2.QRCodeDetector() if cv2 is not None else None
 
-    def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
-        img = frame.to_ndarray(format="bgr24")
+            def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
+                img = frame.to_ndarray(format="bgr24")
 
-        # --- QR (OpenCV) ---
-        if qr is not None:
-            try:
-                data, _, _ = qr.detectAndDecode(img)
-                if data:
-                    st.session_state["detected_sku"] = data.strip()
-            except Exception:
-                pass
+                # --- QR (OpenCV) ---
+                if qr is not None:
+                    try:
+                        data, _, _ = qr.detectAndDecode(img)
+                        if data:
+                            st.session_state["detected_sku"] = data.strip()
+                    except Exception:
+                        pass
 
-        # --- EAN/Code128 (pyzbar) ---
-        if HAS_ZBAR:
-            try:
-                for obj in zbar_decode(img):
-                    st.session_state["detected_sku"] = obj.data.decode("utf-8").strip()
-                    break  # prendi il primo valido
-            except Exception:
-                pass
+                # --- EAN/Code128 (pyzbar) ---
+                if HAS_ZBAR:
+                    try:
+                        for obj in zbar_decode(img):
+                            st.session_state["detected_sku"] = obj.data.decode("utf-8").strip()
+                            break  # prendi il primo valido
+                    except Exception:
+                        pass
 
-        return av.VideoFrame.from_ndarray(img, format="bgr24")
+                return av.VideoFrame.from_ndarray(img, format="bgr24")
 
-    webrtc_ctx = webrtc_streamer(
-        key="qr-ean-live",
-        mode=WebRtcMode.SENDRECV,
-        video_frame_callback=video_frame_callback,
-        media_stream_constraints={"video": True, "audio": False},
-    )
+            webrtc_ctx = webrtc_streamer(
+                key="qr-ean-live",
+                mode=WebRtcMode.SENDRECV,
+                video_frame_callback=video_frame_callback,
+                media_stream_constraints={"video": True, "audio": False},
+            )
 
-    det = st.session_state.get("detected_sku")
-    now = time.time()
-    if det:
-        st.success(f"Rilevato: **{det}**")
+            det = st.session_state.get("detected_sku")
+            now = time.time()
+            if det:
+                st.success(f"Rilevato: **{det}**")
 
-        # azione automatica (1 evento ogni 2s)
-        if auto_register and now - st.session_state["last_fire_ts"] > 2.0:
-            exists = query_df("SELECT sku FROM items WHERE sku=?", (det,))
-            if exists.empty:
-                st.error("SKU non trovato nel catalogo.")
-            else:
-                execute(
-                    "INSERT INTO movements(sku, mtype, causale, qty, note, created_at) VALUES (?,?,?,?,?,?)",
-                    (det, 'SCARICO', 2, -1, 'Auto da scanner live', datetime.now().isoformat(timespec='seconds')),
-                )
-                execute("UPDATE items SET qty = qty - 1 WHERE sku = ?", (det,))
-                st.session_state["last_fire_ts"] = now
-                st.toast("Scarico 1 pz registrato ✅")
+                # azione automatica (1 evento ogni 2s)
+                if auto_register and now - st.session_state["last_fire_ts"] > 2.0:
+                    exists = query_df("SELECT sku FROM items WHERE sku=?", (det,))
+                    if exists.empty:
+                        st.error("SKU non trovato nel catalogo.")
+                    else:
+                        execute(
+                            "INSERT INTO movements(sku, mtype, causale, qty, note, created_at) VALUES (?,?,?,?,?,?)",
+                            (det, 'SCARICO', 2, -1, 'Auto da scanner live', datetime.now().isoformat(timespec='seconds')),
+                        )
+                        execute("UPDATE items SET qty = qty - 1 WHERE sku = ?", (det,))
+                        st.session_state["last_fire_ts"] = now
+                        st.toast("Scarico 1 pz registrato ✅")
 
-        # pulsanti rapidi
-        c1, c2, c3, c4 = st.columns(4)
-        if c1.button("Carico +1"): 
-            execute("INSERT INTO movements(sku, mtype, causale, qty, created_at) VALUES (?,?,?,?,?)",
-                    (det, 'CARICO', 1, 1, datetime.now().isoformat(timespec='seconds')))
-            execute("UPDATE items SET qty = qty + 1 WHERE sku = ?", (det,))
-            st.toast("Carico +1 registrato")
-        if c2.button("Scarico −1"):
-            execute("INSERT INTO movements(sku, mtype, causale, qty, created_at) VALUES (?,?,?,?,?)",
-                    (det, 'SCARICO', 2, -1, datetime.now().isoformat(timespec='seconds')))
-            execute("UPDATE items SET qty = qty - 1 WHERE sku = ?", (det,))
-            st.toast("Scarico −1 registrato")
-        if c3.button("Rettifica +1"):
-            execute("INSERT INTO movements(sku, mtype, causale, qty, created_at) VALUES (?,?,?,?,?)",
-                    (det, 'RETTIFICA', 3, 1, datetime.now().isoformat(timespec='seconds')))
-            execute("UPDATE items SET qty = qty + 1 WHERE sku = ?", (det,))
-            st.toast("Rettifica +1 registrata")
-        if c4.button("Rettifica −1"):
-            execute("INSERT INTO movements(sku, mtype, causale, qty, created_at) VALUES (?,?,?,?,?)",
-                    (det, 'RETTIFICA', 4, -1, datetime.now().isoformat(timespec='seconds')))
-            execute("UPDATE items SET qty = qty - 1 WHERE sku = ?", (det,))
-            st.toast("Rettifica −1 registrata")
+                # pulsanti rapidi
+                c1, c2, c3, c4 = st.columns(4)
+                if c1.button("Carico +1"): 
+                    execute("INSERT INTO movements(sku, mtype, causale, qty, created_at) VALUES (?,?,?,?,?)",
+                            (det, 'CARICO', 1, 1, datetime.now().isoformat(timespec='seconds')))
+                    execute("UPDATE items SET qty = qty + 1 WHERE sku = ?", (det,))
+                    st.toast("Carico +1 registrato")
+                if c2.button("Scarico −1"):
+                    execute("INSERT INTO movements(sku, mtype, causale, qty, created_at) VALUES (?,?,?,?,?)",
+                            (det, 'SCARICO', 2, -1, datetime.now().isoformat(timespec='seconds')))
+                    execute("UPDATE items SET qty = qty - 1 WHERE sku = ?", (det,))
+                    st.toast("Scarico −1 registrato")
+                if c3.button("Rettifica +1"):
+                    execute("INSERT INTO movements(sku, mtype, causale, qty, created_at) VALUES (?,?,?,?,?)",
+                            (det, 'RETTIFICA', 3, 1, datetime.now().isoformat(timespec='seconds')))
+                    execute("UPDATE items SET qty = qty + 1 WHERE sku = ?", (det,))
+                    st.toast("Rettifica +1 registrata")
+                if c4.button("Rettifica −1"):
+                    execute("INSERT INTO movements(sku, mtype, causale, qty, created_at) VALUES (?,?,?,?,?)",
+                            (det, 'RETTIFICA', 4, -1, datetime.now().isoformat(timespec='seconds')))
+                    execute("UPDATE items SET qty = qty - 1 WHERE sku = ?", (det,))
+                    st.toast("Rettifica −1 registrata")
 
 
 
