@@ -819,6 +819,8 @@ def page_movements():
                 st.rerun()
 
 
+# Chiudiamo la funzione page_analysis correttamente
+
 def page_analysis():
     page_header("Analisi", "Pivot, filtri e giacenze storiche")
 
@@ -842,6 +844,9 @@ def page_analysis():
         st.warning("Nessun articolo presente nel database.")
         return
 
+    # ------------------------------------------------------------
+    # MODALITÀ 1: pivot sul periodo
+    # ------------------------------------------------------------
     if mode == "Periodo (movimenti e pivot)":
         c1, c2, c3 = st.columns(3)
         d_from = c1.date_input("Dal", value=date.today().replace(day=1))
@@ -919,6 +924,9 @@ def page_analysis():
         st.markdown("---")
         kpi_card("Valore totale magazzino (filtrato)", fmt_money(totale_valore), icon="💰")
 
+    # ------------------------------------------------------------
+    # MODALITÀ 2: giacenza/valore alla data (AS-OF)
+    # ------------------------------------------------------------
     else:
         c1, _ = st.columns([1,2])
         ref_date = c1.date_input("Data di riferimento (giacenza storica)", value=date.today())
@@ -950,26 +958,27 @@ def page_analysis():
         totale_asof = asof_pivot.loc[asof_pivot["Giacenza alla data"] > 0, "Valore Magazzino alla data (€)"].sum()
 
         st.subheader("📅 Vista storica al giorno selezionato")
-    st.dataframe(
-        asof_pivot,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "articolo": st.column_config.TextColumn("Articolo (SKU)"),
-            "tipo": badge_col("Tipo"),
-            "stagione": badge_col("Stagione"),
-            "taglia": badge_col("Taglia"),
-            "fornitore": st.column_config.TextColumn("Fornitore"),
-            "Giacenza alla data": st.column_config.NumberColumn("Giacenza", format="%d"),
-            "Costo Medio": st.column_config.NumberColumn("Costo Medio", format="€ %.2f"),
-            "Valore Magazzino alla data (€)": st.column_config.NumberColumn("Valore (€)", format="€ %.2f"),
-        },
-    )
+        st.dataframe(
+            asof_pivot,
+            use_container_width=True,
+            hide_index=True,
+            column_config={
+                "articolo": st.column_config.TextColumn("Articolo (SKU)"),
+                "tipo": badge_col("Tipo"),
+                "stagione": badge_col("Stagione"),
+                "taglia": badge_col("Taglia"),
+                "fornitore": st.column_config.TextColumn("Fornitore"),
+                "Giacenza alla data": st.column_config.NumberColumn("Giacenza", format="%d"),
+                "Costo Medio": st.column_config.NumberColumn("Costo Medio", format="€ %.2f"),
+                "Valore Magazzino alla data (€)": st.column_config.NumberColumn("Valore (€)", format="€ %.2f"),
+            },
+        )
+        st.markdown("---")
+        kpi_card("Valore totale magazzino alla data (giacenze > 0)", fmt_money(totale_asof), icon="💰")
 
-    st.markdown("---")
-    kpi_card("Valore totale magazzino alla data (giacenze > 0)", fmt_money(totale_asof), icon="💰")
 
-
+# Assicurati che il main sia presente alla fine del file una sola volta
 if __name__ == '__main__':
     main()
+
          
