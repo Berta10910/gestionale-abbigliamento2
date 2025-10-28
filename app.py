@@ -38,9 +38,17 @@ except Exception:  # fallback di sicurezza
                 pass
 from datetime import datetime, date
 from typing import Tuple, Optional
+from streamlit_webrtc import webrtc_streamer, WebRtcMode  # pip install streamlit-webrtc av
 
+import av, time
 import pandas as pd
 import streamlit as st
+
+try:
+    from pyzbar.pyzbar import decode as zbar_decode
+    HAS_ZBAR = True
+except Exception:
+    HAS_ZBAR = False
 
 # opzionale per scansione QR via fotocamera
 try:
@@ -655,35 +663,92 @@ def page_movements():
                         execute("UPDATE items SET qty = qty + ? WHERE sku = ?", (signed, scanned))
                         st.success("Registrato.")
 
-        with st.expander("Scanner con fotocamera (QR)", expanded=False):
-            st.caption("Usa la fotocamera del telefono per leggere un **QR code** con dentro lo SKU. (Serve OpenCV: `pip install opencv-python`)")
-            if cv2 is None:
-                st.warning("Modulo OpenCV non disponibile. Installa con: pip install opencv-python")
-            cam_img = st.camera_input("Inquadra il QR dell'articolo")
-            decoded_sku = None
-            if cam_img is not None:
-                decoded_sku = decode_qr_from_bytes(cam_img.getvalue())
-                if not decoded_sku:
-                    st.error("Nessun QR riconosciuto. Assicurati che l'etichetta sia un QR e ben a fuoco.")
-            if decoded_sku:
-                st.success(f"QR letto: {decoded_sku}")
-                exists = query_df("SELECT sku, qty FROM items WHERE sku=?", (decoded_sku,))
-                if exists.empty:
-                    st.error("SKU non trovato nel catalogo.")
-                else:
-                    st.info(f"Giacenza attuale: {int(exists.iloc[0]['qty'])}")
-                    qc1, qc2 = st.columns([1,1])
-                    mtype_cam = qc1.selectbox("Tipo movimento", ['CARICO','SCARICO','RETTIFICA +','RETTIFICA -'], key="scan_mtype_cam")
-                    qty_cam = int(qc2.number_input("Quantità", value=1, min_value=1, step=1, key="scan_qty_cam"))
-                    note_cam = st.text_input("Nota", key="scan_note_cam")
-                    if st.button("Registra (da fotocamera)"):
-                        signed = (qty_cam if mtype_cam=='CARICO' else -qty_cam if mtype_cam=='SCARICO' else qty_cam if mtype_cam=='RETTIFICA +' else -qty_cam)
-                        execute(
-                            "INSERT INTO movements(sku, mtype, causale, qty, note, created_at) VALUES (?,?,?,?,?,?)",
-                            (decoded_sku, 'RETTIFICA' if mtype_cam.startswith('RETTIFICA') else mtype_cam, 1 if mtype_cam=='CARICO' else 2 if mtype_cam=='SCARICO' else 3 if mtype_cam=='RETTIFICA +' else 4, signed, note_cam or None, datetime.now().isoformat(timespec='seconds')),
-                        )
-                        execute("UPDATE items SET qty = qty + ? WHERE sku = ?", (signed, decoded_sku))
-                        st.success("Registrato.")
+       with st.expander("📹 Scanner live (QR + EAN/Code128)", expanded=True):
+    st.caption("Lettura continua via webcam. Seleziona 'Auto' per registrare subito.")
+
+    # antirafﬁca / stato
+    if "detected_sku" not in st.session_state:
+        st.session_state["detected_sku"] = None
+    if "last_fire_ts" not in st.session_state:
+        st.session_state["last_fire_ts"] = 0.0
+
+    auto_register = st.checkbox("Auto-registra SCARICO 1 pz al rilevamento", value=False)
+
+    qr = cv2.QRCodeDetector() if cv2 is not None else None
+
+    def video_frame_callback(frame: av.VideoFrame) -> av.VideoFrame:
+        img = frame.to_ndarray(format="bgr24")
+
+        # --- QR (OpenCV) ---
+        if qr is not None:
+            try:
+                data, _, _ = qr.detectAndDecode(img)
+                if data:
+                    st.session_state["detected_sku"] = data.strip()
+            except Exception:
+                pass
+
+        # --- EAN/Code128 (pyzbar) ---
+        if HAS_ZBAR:
+            try:
+                for obj in zbar_decode(img):
+                    st.session_state["detected_sku"] = obj.data.decode("utf-8").strip()
+                    break  # prendi il primo valido
+            except Exception:
+                pass
+
+        return av.VideoFrame.from_ndarray(img, format="bgr24")
+
+    webrtc_ctx = webrtc_streamer(
+        key="qr-ean-live",
+        mode=WebRtcMode.SENDRECV,
+        video_frame_callback=video_frame_callback,
+        media_stream_constraints={"video": True, "audio": False},
+    )
+
+    det = st.session_state.get("detected_sku")
+    now = time.time()
+    if det:
+        st.success(f"Rilevato: **{det}**")
+
+        # azione automatica (1 evento ogni 2s)
+        if auto_register and now - st.session_state["last_fire_ts"] > 2.0:
+            exists = query_df("SELECT sku FROM items WHERE sku=?", (det,))
+            if exists.empty:
+                st.error("SKU non trovato nel catalogo.")
+            else:
+                execute(
+                    "INSERT INTO movements(sku, mtype, causale, qty, note, created_at) VALUES (?,?,?,?,?,?)",
+                    (det, 'SCARICO', 2, -1, 'Auto da scanner live', datetime.now().isoformat(timespec='seconds')),
+                )
+                execute("UPDATE items SET qty = qty - 1 WHERE sku = ?", (det,))
+                st.session_state["last_fire_ts"] = now
+                st.toast("Scarico 1 pz registrato ✅")
+
+        # pulsanti rapidi
+        c1, c2, c3, c4 = st.columns(4)
+        if c1.button("Carico +1"): 
+            execute("INSERT INTO movements(sku, mtype, causale, qty, created_at) VALUES (?,?,?,?,?)",
+                    (det, 'CARICO', 1, 1, datetime.now().isoformat(timespec='seconds')))
+            execute("UPDATE items SET qty = qty + 1 WHERE sku = ?", (det,))
+            st.toast("Carico +1 registrato")
+        if c2.button("Scarico −1"):
+            execute("INSERT INTO movements(sku, mtype, causale, qty, created_at) VALUES (?,?,?,?,?)",
+                    (det, 'SCARICO', 2, -1, datetime.now().isoformat(timespec='seconds')))
+            execute("UPDATE items SET qty = qty - 1 WHERE sku = ?", (det,))
+            st.toast("Scarico −1 registrato")
+        if c3.button("Rettifica +1"):
+            execute("INSERT INTO movements(sku, mtype, causale, qty, created_at) VALUES (?,?,?,?,?)",
+                    (det, 'RETTIFICA', 3, 1, datetime.now().isoformat(timespec='seconds')))
+            execute("UPDATE items SET qty = qty + 1 WHERE sku = ?", (det,))
+            st.toast("Rettifica +1 registrata")
+        if c4.button("Rettifica −1"):
+            execute("INSERT INTO movements(sku, mtype, causale, qty, created_at) VALUES (?,?,?,?,?)",
+                    (det, 'RETTIFICA', 4, -1, datetime.now().isoformat(timespec='seconds')))
+            execute("UPDATE items SET qty = qty - 1 WHERE sku = ?", (det,))
+            st.toast("Rettifica −1 registrata")
+
+
 
     with t2:
         with st.form("mov_form", clear_on_submit=True):
