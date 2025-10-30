@@ -437,8 +437,6 @@ def page_item_details():
                     recent = query_df("SELECT created_at AS data, mtype AS tipo, qty AS qta, note FROM movements WHERE sku=? ORDER BY id DESC LIMIT 10", (decoded_sku,))
                     st.subheader("Ultimi movimenti")
                     st.dataframe(recent, use_container_width=True, hide_index=True)
-                    excel_download_button(recent, f"movimenti_{(scanned or decoded_sku or sku)}.xlsx")
-
 
     with t2:
         all_items = query_df("SELECT sku FROM items ORDER BY created_at DESC")
@@ -451,7 +449,6 @@ def page_item_details():
             recent = query_df("SELECT created_at AS data, mtype AS tipo, qty AS qta, note FROM movements WHERE sku=? ORDER BY id DESC LIMIT 10", (sku,))
             st.subheader("Ultimi movimenti")
             st.dataframe(recent, use_container_width=True, hide_index=True)
-            excel_download_button(recent, f"movimenti_{(scanned or decoded_sku or sku)}.xlsx")
 
 
 
@@ -651,6 +648,7 @@ def page_items():
             "supplier": st.column_config.TextColumn("Fornitore"),
         },
     )
+    excel_download_button(df, "articoli.xlsx")
 
 
 def page_movements():
