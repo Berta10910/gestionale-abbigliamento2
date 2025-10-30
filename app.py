@@ -142,8 +142,7 @@ def badge_options_from(df: pd.DataFrame, col: str):
     except Exception:
         return None
 
-
-
+@st.cache_resource
 def get_engine() -> Engine:
     global _engine
     if _engine is None:
