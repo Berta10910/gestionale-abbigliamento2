@@ -3,13 +3,8 @@ pandas
 opencv-python-headless
 pyzbar
 Pillow
-zxing-cpp
 streamlit-webrtc
 av
-opencv-python
-pyzbar
 xlsxwriter
-SQLAlchemy
-psycopg[binary]
-psycopg2-binary
-
+SQLAlchemy>=2.0
+psycopg[binary]>=3.1
