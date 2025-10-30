@@ -22,6 +22,13 @@ ma applica uno stile più curato.
 
 import os
 import io
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Engine
+
+DATABASE_URL = os.getenv("DATABASE_URL", "").strip()
+IS_PG = DATABASE_URL.lower().startswith("postgresql") if DATABASE_URL else False
+_engine: Engine | None = None
+
 import sqlite3
 # compat: closing() può non essere disponibile in alcuni ambienti
 try:
@@ -137,10 +144,33 @@ def badge_options_from(df: pd.DataFrame, col: str):
 
 
 
-def get_conn():
-    conn = sqlite3.connect(DB_PATH, check_same_thread=False)
-    conn.execute("PRAGMA foreign_keys = ON;")
-    return conn
+def get_engine() -> Engine:
+    global _engine
+    if _engine is None:
+        if DATABASE_URL:
+            _engine = create_engine(DATABASE_URL, pool_pre_ping=True)  # Postgres (Supabase)
+        else:
+            # fallback locale SQLite solo se DATABASE_URL non è impostata
+            _engine = create_engine(f"sqlite:///{DB_PATH}", connect_args={"check_same_thread": False})
+    return _engine
+    
+
+from sqlalchemy import text
+
+def _to_text_with_binds(sql: str, params):
+    """
+    Converte i ? posizionali in :p1, :p2 ... e restituisce (TextClause, dict_bind).
+    Così puoi continuare a scrivere SQL con i ? anche su Postgres.
+    """
+    if isinstance(params, (list, tuple)):
+        bind = {f"p{i}": v for i, v in enumerate(params, 1)}
+        for i in range(1, len(params) + 1):
+            sql = sql.replace("?", f":p{i}", 1)
+    elif isinstance(params, dict):
+        bind = params
+    else:
+        bind = {}
+    return text(sql), bind
 
 
 def kpi_card(title: str, value: str, sub: Optional[str] = None, icon: Optional[str] = None):
@@ -173,73 +203,10 @@ def page_header(title: str, subtitle: str = ""):
 
 
 def init_db():
-    schema = """
-    CREATE TABLE IF NOT EXISTS suppliers (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        code TEXT UNIQUE,
-        name TEXT NOT NULL,
-        city TEXT,
-        phone TEXT,
-        lead_time_days INTEGER,
-        vat_number TEXT
-    );
-
-    CREATE TABLE IF NOT EXISTS dict_types (type TEXT PRIMARY KEY);
-    CREATE TABLE IF NOT EXISTS dict_seasons (season TEXT PRIMARY KEY);
-    CREATE TABLE IF NOT EXISTS dict_sizes (size TEXT PRIMARY KEY);
-
-    CREATE TABLE IF NOT EXISTS items (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        supplier_id INTEGER,
-        sku TEXT UNIQUE,
-        type TEXT,
-        season TEXT,
-        size TEXT,
-        cost REAL,
-        price REAL,
-        qty INTEGER DEFAULT 0,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (supplier_id) REFERENCES suppliers(id)
-    );
-
-    CREATE TABLE IF NOT EXISTS movements (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        sku TEXT NOT NULL,
-        mtype TEXT NOT NULL,
-        causale INTEGER NOT NULL DEFAULT 0,
-        qty INTEGER NOT NULL,
-        note TEXT,
-        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
-        FOREIGN KEY (sku) REFERENCES items(sku) ON DELETE CASCADE
-    );
-    """
-    with closing(get_conn()) as conn:
-        cur = conn.cursor()
-        cur.executescript(schema)
-        # Migrazioni leggere
-        def add_col_if_missing(table, col, ddl):
-            cur.execute(f"PRAGMA table_info({table})")
-            cols = [r[1] for r in cur.fetchall()]
-            if col not in cols:
-                cur.execute(f"ALTER TABLE {table} ADD COLUMN {ddl}")
-        add_col_if_missing('suppliers','city','city TEXT')
-        add_col_if_missing('suppliers','phone','phone TEXT')
-        add_col_if_missing('suppliers','lead_time_days','lead_time_days INTEGER')
-        add_col_if_missing('suppliers','vat_number','vat_number TEXT')
-        add_col_if_missing('items','qty','qty INTEGER DEFAULT 0')
-        add_col_if_missing('items','created_at','created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP')
-        add_col_if_missing('items','cost','cost REAL')
-        add_col_if_missing('items','price','price REAL')
-        add_col_if_missing('movements','causale','causale INTEGER NOT NULL DEFAULT 0')
-        conn.commit()
-        # Seed
-        if cur.execute("SELECT COUNT(*) FROM dict_types").fetchone()[0] == 0:
-            cur.executemany("INSERT INTO dict_types(type) VALUES (?)", [(t,) for t in ["TSHIRT","JEANS","GIUBBOTTO","ABITO"]])
-        if cur.execute("SELECT COUNT(*) FROM dict_seasons").fetchone()[0] == 0:
-            cur.executemany("INSERT INTO dict_seasons(season) VALUES (?)", [(s,) for s in ["SS25","FW25","AI25"]])
-        if cur.execute("SELECT COUNT(*) FROM dict_sizes").fetchone()[0] == 0:
-            cur.executemany("INSERT INTO dict_sizes(size) VALUES (?)", [(x,) for x in ["XS","S","M","L","XL","40","42","44"]])
-        conn.commit()
+     # Se usiamo Postgres (DATABASE_URL presente), lo schema è già creato su Supabase: non fare nulla qui.
+    if DATABASE_URL:
+        return
+    # ... lascia invariato il resto dello schema SQLite per l'uso locale ...
 
 
 # --------------- UTILS ----------------
@@ -293,17 +260,16 @@ def format_df_for_display(df: pd.DataFrame, int_cols=None, money_cols=None) -> p
     return dff
 
 
-def query_df(sql: str, params: Tuple = ()):  # -> DataFrame
-    with closing(get_conn()) as conn:
-        return pd.read_sql_query(sql, conn, params=params)
+def query_df(sql: str, params: tuple | dict = ()):
+    t, b = _to_text_with_binds(sql, params)
+    with get_engine().connect() as conn:
+        return pd.read_sql_query(t, conn, params=b)
 
 
-def execute(sql: str, params: Tuple = ()):  # -> lastrowid
-    with closing(get_conn()) as conn:
-        cur = conn.cursor()
-        cur.execute(sql, params)
-        conn.commit()
-        return cur.lastrowid
+def execute(sql: str, params: tuple | dict = ()):
+    t, b = _to_text_with_binds(sql, params)
+    with get_engine().begin() as conn:
+        conn.execute(t, b)
 
 
 def recalc_qty_from_movements(sku: str):
@@ -491,9 +457,19 @@ def page_suppliers():
             submitted = colb1.form_submit_button("💾 Salva")
             if submitted and name:
                 execute(
-                    "INSERT OR REPLACE INTO suppliers(code, name, city, phone, lead_time_days, vat_number) VALUES (?,?,?,?,?,?)",
-                    (code or None, name, city or None, phone or None, int(lead), vat or None),
-                )
+                            """
+                            INSERT INTO suppliers(code, name, city, phone, lead_time_days, vat_number)
+                            VALUES (:code, :name, :city, :phone, :lead, :vat)
+                            ON CONFLICT (code) DO UPDATE
+                            SET name = EXCLUDED.name,
+                                city = EXCLUDED.city,
+                                phone = EXCLUDED.phone,
+                                lead_time_days = EXCLUDED.lead_time_days,
+                                vat_number = EXCLUDED.vat_number
+                            """,
+                            {"code": code or None, "name": name, "city": city or None, "phone": phone or None,
+                            "lead": int(lead), "vat": vat or None}
+                        )
                 st.success("Fornitore salvato.")
 
     st.subheader("Elenco")
@@ -565,15 +541,15 @@ def page_items():
         colA, colB, colC = st.columns(3)
         new_t = colA.text_input("Nuovo tipo", key="new_type")
         if colA.button("Aggiungi tipo", key="btn_add_type") and new_t:
-            execute("INSERT OR IGNORE INTO dict_types(type) VALUES (?)", (new_t.upper(),))
+            execute("INSERT INTO dict_types(type) VALUES (?) ON CONFLICT DO NOTHING", (new_t.upper(),))
             st.rerun()
         new_s = colB.text_input("Nuova stagione", key="new_season")
         if colB.button("Aggiungi stagione", key="btn_add_season") and new_s:
-            execute("INSERT OR IGNORE INTO dict_seasons(season) VALUES (?)", (new_s.upper(),))
+            execute("INSERT INTO dict_seasons(season) VALUES (?) ON CONFLICT DO NOTHING", (new_s.upper(),))
             st.rerun()
         new_z = colC.text_input("Nuova taglia", key="new_size")
         if colC.button("Aggiungi taglia", key="btn_add_size") and new_z:
-            execute("INSERT OR IGNORE INTO dict_sizes(size) VALUES (?)", (new_z.upper(),))
+            execute("INSERT INTO dict_sizes(size) VALUES (?) ON CONFLICT DO NOTHING", (new_z.upper(),))
             st.rerun()
 
         st.markdown("---")
@@ -618,9 +594,11 @@ def page_items():
             sid = int(suppliers[suppliers['name'] == supplier_name]['id'].iloc[0])
             sku = f"{supplier_name[:3].upper()}-{type_[:3].upper()}-{season}-{size}"
             execute(
-                "INSERT OR IGNORE INTO items(supplier_id, sku, type, season, size, cost, price, qty) VALUES (?,?,?,?,?,?,?,?)",
-                (sid, sku, type_.upper(), season.upper(), size.upper(), float(cost), float(price), int(qty0)),
-            )
+                    "INSERT INTO items(supplier_id, sku, type, season, size, cost, price, qty) "
+                    "VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(sku) DO NOTHING",
+                    (sid, sku, type_.upper(), season.upper(), size.upper(), float(cost), float(price), int(qty0)),
+                )
+
             if qty0:
                 execute(
                     "INSERT INTO movements(sku, mtype, causale, qty, note, created_at) VALUES (?,?,?,?,?,?)",
@@ -795,7 +773,9 @@ def page_movements():
     all_skus = items['sku'].tolist()
     sku_filter = f3.selectbox("SKU (tutti)", ["(tutti)"] + all_skus, key="mov_sku_filter")
 
-    sql = "SELECT id, created_at, sku, mtype, causale, qty, note FROM movements WHERE date(created_at) BETWEEN ? AND ?"
+    date_expr = "created_at::date" if IS_PG else "date(created_at)"
+    sql = f"SELECT id, created_at, sku, mtype, causale, qty, note FROM movements " \
+      f"WHERE {date_expr} BETWEEN ? AND ?"
     params = [d_from.isoformat(), d_to.isoformat()]
     if sku_filter != "(tutti)":
         sql += " AND sku=?"
@@ -865,7 +845,7 @@ def page_analysis():
     if df_items.empty:
         st.warning("Nessun articolo presente nel database.")
         return
-        
+
     # --- 🔹 Filtri aggiuntivi per stagione e taglia ---
     colf1, colf2 = st.columns(2)
     stagioni = ["(tutte)"] + sorted(df_items["stagione"].dropna().unique().tolist())
@@ -892,10 +872,10 @@ def page_analysis():
             ["Articolo", "Più movimentato", "Più venduto", "Valore magazzino", "Costo medio"],
             index=0,
         )
-
+        date_expr = "created_at::date" if IS_PG else "date(created_at)"
         mov = query_df(
-            "SELECT sku AS articolo, mtype AS tipo_movimento, qty AS quantita, date(created_at) AS data "
-            "FROM movements WHERE date(created_at) BETWEEN ? AND ?",
+            f"SELECT sku AS articolo, mtype AS tipo_movimento, qty AS quantita, {date_expr} AS data "
+            f"FROM movements WHERE {date_expr} BETWEEN ? AND ?",
             (d_from.isoformat(), d_to.isoformat()),
         )
 
@@ -970,10 +950,12 @@ def page_analysis():
         st.caption("La giacenza è la somma dei movimenti fino alle 23:59:59 della data selezionata. Valore a costo attuale.")
 
         ref_dt_end = f"{ref_date.isoformat()} 23:59:59"
+        time_cmp = "created_at <= :p1" if IS_PG else "datetime(created_at) <= :p1"
         mov_to_ref = query_df(
-            "SELECT sku AS articolo, SUM(qty) AS giacenza_ref FROM movements WHERE datetime(created_at) <= ? GROUP BY sku",
-            (ref_dt_end,),
+            f"SELECT sku AS articolo, SUM(qty) AS giacenza_ref FROM movements WHERE {time_cmp} GROUP BY sku",
+            {"p1": f"{ref_date.isoformat()} 23:59:59"},
         )
+
         asof_df = df_items.merge(mov_to_ref, on="articolo", how="left")
         asof_df["giacenza_ref"] = asof_df["giacenza_ref"].fillna(0).astype(int)
 

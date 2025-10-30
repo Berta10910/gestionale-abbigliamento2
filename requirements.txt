@@ -9,4 +9,7 @@ av
 opencv-python
 pyzbar
 xlsxwriter
+SQLAlchemy
+psycopg[binary]
+psycopg2-binary
 
