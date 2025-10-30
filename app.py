@@ -865,6 +865,20 @@ def page_analysis():
     if df_items.empty:
         st.warning("Nessun articolo presente nel database.")
         return
+        
+    # --- 🔹 Filtri aggiuntivi per stagione e taglia ---
+    colf1, colf2 = st.columns(2)
+    stagioni = ["(tutte)"] + sorted(df_items["stagione"].dropna().unique().tolist())
+    taglie = ["(tutte)"] + sorted(df_items["taglia"].dropna().unique().tolist())
+
+    filtro_stagione = colf1.selectbox("Filtra per stagione", stagioni, index=0)
+    filtro_taglia = colf2.selectbox("Filtra per taglia", taglie, index=0)
+
+    # Applica i filtri prima di qualsiasi analisi
+    if filtro_stagione != "(tutte)":
+        df_items = df_items[df_items["stagione"] == filtro_stagione]
+    if filtro_taglia != "(tutte)":
+        df_items = df_items[df_items["taglia"] == filtro_taglia]
 
     # ------------------------------------------------------------
     # MODALITÀ 1: pivot sul periodo
