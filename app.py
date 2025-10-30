@@ -514,7 +514,8 @@ def page_suppliers():
             "lead_days": st.column_config.NumberColumn("Lead Time (gg)", format="%d"),
             "piva": st.column_config.TextColumn("P. IVA"),
         },
-    )excel_download_button(view, "fornitori.xlsx")
+    )
+    excel_download_button(view, "fornitori.xlsx")
 
 
     with st.expander("✏️ Modifica / 🗑️ Elimina"):
@@ -818,7 +819,8 @@ def page_movements():
             "qty": st.column_config.NumberColumn("Quantità", format="%d"),
             "note": st.column_config.TextColumn("Nota"),
         },
-    )excel_download_button(mov, f"movimenti_{d_from}_{d_to}.xlsx")
+    )
+    excel_download_button(mov, f"movimenti_{d_from}_{d_to}.xlsx")
 
 
     st.markdown("**Elimina movimento**")
@@ -942,7 +944,8 @@ def page_analysis():
                 "Vendite": st.column_config.NumberColumn("Vendite", format="%d"),
                 "Movimentazioni": st.column_config.NumberColumn("Movimentazioni", format="%d"),
             },
-        )excel_download_button(pivot_df, f"analisi_periodo_{d_from}_{d_to}.xlsx")
+        )
+        excel_download_button(pivot_df, f"analisi_periodo_{d_from}_{d_to}.xlsx")
         st.markdown("---")
         kpi_card("Valore totale magazzino (filtrato)", fmt_money(totale_valore), icon="💰")
 
