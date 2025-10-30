@@ -1,1 +1,6 @@
+ffmpeg
 libzbar0
+libgl1
+libsm6
+libxext6
+libasound2
