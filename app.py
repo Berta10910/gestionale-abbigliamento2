@@ -437,6 +437,20 @@ def page_dashboard():
     st.divider()
     st.info("Suggerimento: usa la sezione **Analisi** per report più avanzati.")
 
+import streamlit as st
+
+@st.cache_data(ttl=60)
+def get_suppliers():
+    """Restituisce la lista dei fornitori (cache 60s)."""
+    return query_df("SELECT id, name FROM suppliers ORDER BY name")
+
+@st.cache_data(ttl=60)
+def get_dictionaries():
+    """Restituisce i dizionari tipo, stagione e taglia (cache 60s)."""
+    dict_types = query_df("SELECT type FROM dict_types ORDER BY type")["type"].tolist()
+    dict_seasons = query_df("SELECT season FROM dict_seasons ORDER BY season")["season"].tolist()
+    dict_sizes = query_df("SELECT size FROM dict_sizes ORDER BY size")["size"].tolist()
+    return dict_types, dict_seasons, dict_sizes
 
 def page_suppliers():
     page_header("Fornitori", "Anagrafiche e tempi di consegna")
@@ -531,10 +545,9 @@ def page_items():
         st.info("Inserisci prima almeno un fornitore nella sezione Fornitori.")
         return
 
-    # Dizionari
-    dict_types = query_df("SELECT type FROM dict_types ORDER BY type")["type"].tolist()
-    dict_seasons = query_df("SELECT season FROM dict_seasons ORDER BY season")["season"].tolist()
-    dict_sizes = query_df("SELECT size FROM dict_sizes ORDER BY size")["size"].tolist()
+    suppliers = get_suppliers()
+    dict_types, dict_seasons, dict_sizes = get_dictionaries()
+
 
     with st.expander("🗂️ Gestione dizionari (Tipo / Stagione / Taglia)", expanded=False):
         colA, colB, colC = st.columns(3)
