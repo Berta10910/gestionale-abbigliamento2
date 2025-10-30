@@ -52,6 +52,10 @@ import av, time
 import pandas as pd
 import streamlit as st
 
+def refresh_cache():
+    # invalida tutte le cache create con @st.cache_data
+    st.cache_data.clear()
+
 try:
     from pyzbar.pyzbar import decode as zbar_decode
     HAS_ZBAR = True
@@ -439,12 +443,12 @@ def page_dashboard():
 
 import streamlit as st
 
-@st.cache_data(ttl=60)
+
 def get_suppliers():
     """Restituisce la lista dei fornitori (cache 60s)."""
     return query_df("SELECT id, name FROM suppliers ORDER BY name")
 
-@st.cache_data(ttl=60)
+
 def get_dictionaries():
     """Restituisce i dizionari tipo, stagione e taglia (cache 60s)."""
     dict_types = query_df("SELECT type FROM dict_types ORDER BY type")["type"].tolist()
@@ -483,7 +487,9 @@ def page_suppliers():
                             {"code": code or None, "name": name, "city": city or None, "phone": phone or None,
                             "lead": int(lead), "vat": vat or None}
                         )
+                        refresh_cache()
                 st.success("Fornitore salvato.")
+                st.rerun()
 
     st.subheader("Elenco")
     df = query_df("SELECT id, code, name, city, phone, lead_time_days AS lead_days, vat_number AS piva FROM suppliers ORDER BY name")
@@ -524,6 +530,7 @@ def page_suppliers():
                     "UPDATE suppliers SET code=?, name=?, city=?, phone=?, lead_time_days=?, vat_number=? WHERE id=?",
                     (n_code or None, sel, n_city or None, n_phone or None, int(n_lead), n_vat or None, int(df[df['name']==sel]['id'].iloc[0]))
                 )
+                refresh_cache()
                 st.success("Fornitore aggiornato.")
                 st.rerun()
             to_del = cta2.selectbox("Elimina…", df.apply(lambda r: f"{r['id']} — {r['name']} ({r['code'] or ''})", axis=1))
@@ -534,6 +541,7 @@ def page_suppliers():
                     st.error("Impossibile eliminare: esistono articoli collegati.")
                 else:
                     execute("DELETE FROM suppliers WHERE id=?", (fid,))
+                    refresh_cache()
                     st.success("Fornitore eliminato.")
                     st.rerun()
 
@@ -554,14 +562,17 @@ def page_items():
         new_t = colA.text_input("Nuovo tipo", key="new_type")
         if colA.button("Aggiungi tipo", key="btn_add_type") and new_t:
             execute("INSERT INTO dict_types(type) VALUES (?) ON CONFLICT DO NOTHING", (new_t.upper(),))
+            refresh_cache()
             st.rerun()
         new_s = colB.text_input("Nuova stagione", key="new_season")
         if colB.button("Aggiungi stagione", key="btn_add_season") and new_s:
             execute("INSERT INTO dict_seasons(season) VALUES (?) ON CONFLICT DO NOTHING", (new_s.upper(),))
+            refresh_cache()
             st.rerun()
         new_z = colC.text_input("Nuova taglia", key="new_size")
         if colC.button("Aggiungi taglia", key="btn_add_size") and new_z:
             execute("INSERT INTO dict_sizes(size) VALUES (?) ON CONFLICT DO NOTHING", (new_z.upper(),))
+            refresh_cache()
             st.rerun()
 
         st.markdown("---")
@@ -572,6 +583,7 @@ def page_items():
             if used: st.error("Non puoi eliminare: è usato da alcuni articoli.")
             else:
                 execute("DELETE FROM dict_types WHERE type=?", (del_t,))
+                refresh_cache()
                 st.success("Tipo eliminato.")
                 st.rerun()
         del_s = dcol2.selectbox("Elimina stagione (se non usata)", ["—"] + dict_seasons, key="del_season")
@@ -580,6 +592,7 @@ def page_items():
             if used: st.error("Non puoi eliminare: è usata da alcuni articoli.")
             else:
                 execute("DELETE FROM dict_seasons WHERE season=?", (del_s,))
+                refresh_cache()
                 st.success("Stagione eliminata.")
                 st.rerun()
         del_z = dcol3.selectbox("Elimina taglia (se non usata)", ["—"] + dict_sizes, key="del_size")
@@ -588,6 +601,7 @@ def page_items():
             if used: st.error("Non puoi eliminare: è usata da alcuni articoli.")
             else:
                 execute("DELETE FROM dict_sizes WHERE size=?", (del_z,))
+                refresh_cache()
                 st.success("Taglia eliminata.")
                 st.rerun()
 
@@ -616,7 +630,9 @@ def page_items():
                     "INSERT INTO movements(sku, mtype, causale, qty, note, created_at) VALUES (?,?,?,?,?,?)",
                     (sku, 'CARICO', 1, int(qty0), 'Giacenza iniziale', datetime.now().isoformat(timespec='seconds')),
                 )
+                refresh_cache() 
             st.success(f"Articolo {sku} creato.")
+            st.rerun()
 
     st.subheader("Elenco articoli")
     df = query_df(
