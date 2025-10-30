@@ -21,6 +21,7 @@ ma applica uno stile più curato.
 """
 
 import os
+import io
 import sqlite3
 # compat: closing() può non essere disponibile in alcuni ambienti
 try:
@@ -91,6 +92,21 @@ def apply_global_css():
         </style>
         """,
         unsafe_allow_html=True,
+    )
+
+def excel_download_button(df: pd.DataFrame, filename: str, label: str = "⬇️ Esporta Excel"):
+    """Crea un pulsante per scaricare un DataFrame in formato .xlsx."""
+    if df is None or df.empty:
+        st.caption("Nessun dato da esportare.")
+        return
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="xlsxwriter") as writer:
+        df.to_excel(writer, index=False, sheet_name="Dati")
+    st.download_button(
+        label=label,
+        data=buf.getvalue(),
+        file_name=filename,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     )
 
 
@@ -421,6 +437,8 @@ def page_item_details():
                     recent = query_df("SELECT created_at AS data, mtype AS tipo, qty AS qta, note FROM movements WHERE sku=? ORDER BY id DESC LIMIT 10", (decoded_sku,))
                     st.subheader("Ultimi movimenti")
                     st.dataframe(recent, use_container_width=True, hide_index=True)
+                    excel_download_button(recent, f"movimenti_{(scanned or decoded_sku or sku)}.xlsx")
+
 
     with t2:
         all_items = query_df("SELECT sku FROM items ORDER BY created_at DESC")
@@ -433,6 +451,8 @@ def page_item_details():
             recent = query_df("SELECT created_at AS data, mtype AS tipo, qty AS qta, note FROM movements WHERE sku=? ORDER BY id DESC LIMIT 10", (sku,))
             st.subheader("Ultimi movimenti")
             st.dataframe(recent, use_container_width=True, hide_index=True)
+            excel_download_button(recent, f"movimenti_{(scanned or decoded_sku or sku)}.xlsx")
+
 
 
 
@@ -494,7 +514,8 @@ def page_suppliers():
             "lead_days": st.column_config.NumberColumn("Lead Time (gg)", format="%d"),
             "piva": st.column_config.TextColumn("P. IVA"),
         },
-    )
+    )excel_download_button(view, "fornitori.xlsx")
+
 
     with st.expander("✏️ Modifica / 🗑️ Elimina"):
         if df.empty:
@@ -797,7 +818,8 @@ def page_movements():
             "qty": st.column_config.NumberColumn("Quantità", format="%d"),
             "note": st.column_config.TextColumn("Nota"),
         },
-    )
+    )excel_download_button(mov, f"movimenti_{d_from}_{d_to}.xlsx")
+
 
     st.markdown("**Elimina movimento**")
     if not mov.empty:
@@ -920,7 +942,7 @@ def page_analysis():
                 "Vendite": st.column_config.NumberColumn("Vendite", format="%d"),
                 "Movimentazioni": st.column_config.NumberColumn("Movimentazioni", format="%d"),
             },
-        )
+        )excel_download_button(pivot_df, f"analisi_periodo_{d_from}_{d_to}.xlsx")
         st.markdown("---")
         kpi_card("Valore totale magazzino (filtrato)", fmt_money(totale_valore), icon="💰")
 
@@ -973,6 +995,7 @@ def page_analysis():
                 "Valore Magazzino alla data (€)": st.column_config.NumberColumn("Valore (€)", format="€ %.2f"),
             },
         )
+        excel_download_button(asof_pivot, f"analisi_asof_{ref_date}.xlsx")
         st.markdown("---")
         kpi_card("Valore totale magazzino alla data (giacenze > 0)", fmt_money(totale_asof), icon="💰")
 

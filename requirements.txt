@@ -8,4 +8,5 @@ streamlit-webrtc
 av
 opencv-python
 pyzbar
+xlsxwriter
 
